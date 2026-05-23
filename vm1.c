@@ -140,11 +140,51 @@ static int channel_write(machine *vm1)
   return fwrite(&vm1->space[CHANNEL_OUT], 1, 1, stdout) == 1 ? 0 : -1;
 }
 
+static idx read_word(const machine *vm1, idx word)
+{
+  idx value;
+  memcpy(&value, vm1->space + word * sizeof value, sizeof value);
+  return value;
+}
+
+static void write_word(machine *vm1, idx word, idx value)
+{
+  memcpy(vm1->space + word * sizeof value, &value, sizeof value);
+}
+
+static void write_instruction(machine *vm1, idx slot, idx dst_low, idx dst_high, idx src_low, idx src_high)
+{
+  idx off = (idx)(slot * EDGES * WAYS);
+
+  write_word(vm1, off + 0, dst_low);
+  write_word(vm1, off + 1, dst_high);
+  write_word(vm1, off + 2, src_low);
+  write_word(vm1, off + 3, src_high);
+}
+
+static void clear_processor(machine *vm1)
+{
+  size_t bytes = PROCESSOR_N * EDGES * WAYS * sizeof(idx);
+  if(bytes > sizeof vm1->space)
+    bytes = sizeof vm1->space;
+  memset(vm1->space, 0, bytes);
+}
+
+static void install_space_test(machine *vm1)
+{
+  clear_processor(vm1);
+
+  write_instruction(vm1, 0, TEST_BUF0 - 1, TEST_BUF0 + CHAR_BIT, CHANNEL_IN_LO - 1, CHANNEL_IN_HI);
+  write_instruction(vm1, 1, TEST_BUF1 - 1, TEST_BUF1 + CHAR_BIT, TEST_BUF0 - 1, TEST_BUF0 + CHAR_BIT);
+  write_instruction(vm1, 2, CHANNEL_OUT_LO - 1, CHANNEL_OUT_HI, TEST_BUF1 - 1, TEST_BUF1 + CHAR_BIT);
+}
+
 /* machine hardware construction */
 static machine *allocate_machine(int argc, char **argv)
 {
   idx i;
-  E(argc != 2, HELP);
+  E(argc != 2 && argc != 3, HELP);
+  E(argc == 3 && strcmp(argv[2], "test") != 0, HELP);
 
   machine *vm1 = calloc(1, sizeof *vm1);
   E(vm1 == NULL, "cannot allocate machine memory");
@@ -166,6 +206,10 @@ static machine *allocate_machine(int argc, char **argv)
     memmove(vm1->space, &loader, I);
   if(PROCESSOR_N * I + I <= sizeof vm1->space)
     memmove(vm1->space + PROCESSOR_N * I, &echo, I);
+
+  if(argc == 3)
+    install_space_test(vm1);
+
   return vm1;
 }
 
@@ -197,10 +241,10 @@ static void i1(machine *vm1)
   for(i = 0; i + EDGES * WAYS <= words; i += EDGES * WAYS)
   {
     /* h/w solution would just be properly conducted wires */
-    idx dst_low = ((idx*)vm1->space)[i];
-    idx dst_high = ((idx*)vm1->space)[i + 1];
-    idx src_low = ((idx*)vm1->space)[i + 2];
-    idx src_high = ((idx*)vm1->space)[i + 3];
+    idx dst_low = read_word(vm1, i);
+    idx dst_high = read_word(vm1, i + 1);
+    idx src_low = read_word(vm1, i + 2);
+    idx src_high = read_word(vm1, i + 3);
 
     /* skip empty instruction */
     if(src_low == src_high)
@@ -345,31 +389,26 @@ static void tact(machine *vm1, void (*f)(machine*, idx, idx))
       f(vm1, vm1->fabric.layers[l].pairs[p].a, vm1->fabric.layers[l].pairs[p].b);
 }
 
-int main(int argc, char **argv)
+static void compute(machine *vm1, void (**ff)(machine*), void (**f)(machine*, idx, idx), idx n)
 {
-  idx t;
-  machine *vm1 = allocate_machine(argc, argv);
-  void (*ff[])(machine*) = {i1, i2};
-  void (*f[])(machine*, idx, idx) = {f1, f2};
-
-  /* initialize processor code before the first channel byte is accepted */
-  for(t = 0; t < ARR_SZ(f); ++t)
+  for(idx t = 0; t < n; ++t)
   {
-    ff[t](vm1);
-    tact(vm1, f[t]);
+    ff[t](vm1);        /* initialize tact */
+    tact(vm1, f[t]);   /* perform tact */
   }
+}
+
+static void run_echo(machine *vm1, void (**ff)(machine*), void (**f)(machine*, idx, idx), idx n)
+{
+  /* initialize processor code before the first channel byte is accepted */
+  compute(vm1, ff, f, n);
 
   int have_output = 0;
   uint64_t life = LIFE;
 
-  /* parallel address copy emulation */
   while(life-- && channel_read(vm1) == 0)
   {
-    for(t = 0; t < ARR_SZ(f); ++t)
-    {
-      ff[t](vm1);        /* initialize tact */
-      tact(vm1, f[t]);   /* perform tact */
-    }
+    compute(vm1, ff, f, n);
 
     if(have_output && channel_write(vm1) != 0)
       break;
@@ -379,13 +418,35 @@ int main(int argc, char **argv)
   if(have_output)
   {
     for(int flush = 0; flush < 2; ++flush)
-      for(t = 0; t < ARR_SZ(f); ++t)
-      {
-        ff[t](vm1);
-        tact(vm1, f[t]);
-      }
+      compute(vm1, ff, f, n);
     channel_write(vm1);
   }
+}
+
+static void run_space_test(machine *vm1, void (**ff)(machine*), void (**f)(machine*, idx, idx), idx n)
+{
+  uint64_t life = LIFE;
+
+  while(life >= TEST_CYCLES && channel_read(vm1) == 0)
+  {
+    for(int i = 0; i < TEST_CYCLES; ++i)
+      compute(vm1, ff, f, n);
+    if(channel_write(vm1) != 0)
+      break;
+    life -= TEST_CYCLES;
+  }
+}
+
+int main(int argc, char **argv)
+{
+  machine *vm1 = allocate_machine(argc, argv);
+  void (*ff[])(machine*) = {i1, i2};
+  void (*f[])(machine*, idx, idx) = {f1, f2};
+
+  if(argc == 3)
+    run_space_test(vm1, ff, f, ARR_SZ(f));
+  else
+    run_echo(vm1, ff, f, ARR_SZ(f));
 
   network_free(&vm1->fabric);
   free(vm1);

@@ -28,7 +28,14 @@
 #define LAYER_N (LOG2(SPACE_SIZE) * (LOG2(SPACE_SIZE) + 1) / 2)
 #define CHANNEL_IN  (SPACE_SIZE / CHAR_BIT - 1)
 #define CHANNEL_OUT (SPACE_SIZE / CHAR_BIT - 2)
-#define HELP "command line:\nvm1 [sorter.txt] [</dev/stdin >/dev/stdout]"
+#define CHANNEL_IN_LO  (CHANNEL_IN * CHAR_BIT)
+#define CHANNEL_IN_HI  (CHANNEL_IN_LO + CHAR_BIT)
+#define CHANNEL_OUT_LO (CHANNEL_OUT * CHAR_BIT)
+#define CHANNEL_OUT_HI (CHANNEL_OUT_LO + CHAR_BIT)
+#define TEST_BUF0 0x4000
+#define TEST_BUF1 (TEST_BUF0 + CHAR_BIT)
+#define TEST_CYCLES 2
+#define HELP "command line:\nvm1 [sorter.txt] [test] [</dev/stdin >/dev/stdout]"
 
 /* macros */
 #if defined(_MSC_VER)       /* returns roundup(log2(n + 1)), n > 0 */
