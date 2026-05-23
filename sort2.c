@@ -2,7 +2,9 @@
  * BLOCK SORTING NETWORK GENERATOR
  *
  * Recursive odd-even mergesort with a 16-input optimal base network.
- * Default size: 65536 positions.
+ * Generates sorter pairs for an arbitrary working set by:
+ * 1) building network for next power-of-two size;
+ * 2) filtering pairs outside requested position range.
  *
  * The 16-input network below matches the 60-comparator, 10-layer network
  * commonly attributed to Green.
@@ -49,6 +51,20 @@ static uint32_t parse_u32(const char *s)
 static int is_pow2(uint32_t n)
 {
   return n != 0 && (n & (n - 1)) == 0;
+}
+
+static uint32_t next_pow2(uint32_t n)
+{
+  if(n <= 1)
+    return 1;
+
+  --n;
+  n |= n >> 1;
+  n |= n >> 2;
+  n |= n >> 4;
+  n |= n >> 8;
+  n |= n >> 16;
+  return n + 1;
 }
 
 static void layer_reserve(layer_t *layer, size_t need)
@@ -236,33 +252,40 @@ static network_t sort_network(uint32_t base, uint32_t n)
   return net;
 }
 
-static void print_network(const network_t *net)
+static void print_network_trimmed(const network_t *net, uint32_t limit)
 {
   for(size_t l = 0; l < net->count; ++l)
     for(size_t i = 0; i < net->layers[l].count; ++i)
-      printf("%u %u\n",
-             net->layers[l].pairs[i].a,
-             net->layers[l].pairs[i].b);
+      if(net->layers[l].pairs[i].a < limit
+         && net->layers[l].pairs[i].b < limit)
+        printf("%u %u\n",
+               net->layers[l].pairs[i].a,
+               net->layers[l].pairs[i].b);
 }
 
 int main(int argc, char **argv)
 {
-  uint32_t n = 65536;
+  uint32_t space_size = 65520;
+  uint32_t network_size;
 
   if(argc > 2) {
-    fputs("usage: sort2 [n]\n", stderr);
+    fputs("usage: sort2 [space_size]\n", stderr);
     return EXIT_FAILURE;
   }
   if(argc == 2)
-    n = parse_u32(argv[1]);
+    space_size = parse_u32(argv[1]);
 
-  if(!is_pow2(n) || n < 16)
-    die("n must be a power of two and at least 16");
+  if(space_size < 16)
+    die("space_size must be at least 16");
+
+  network_size = next_pow2(space_size);
+  if(!is_pow2(network_size))
+    die("internal error: next power-of-two failed");
 
   setvbuf(stdout, NULL, _IOFBF, 1 << 20);
 
-  network_t net = sort_network(0, n);
-  print_network(&net);
+  network_t net = sort_network(0, network_size);
+  print_network_trimmed(&net, space_size);
   network_free(&net);
   return EXIT_SUCCESS;
 }

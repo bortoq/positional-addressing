@@ -7,9 +7,8 @@
 #include "vm1.h"
 
 static const uint64_t loader = 0x3fc01fff2000003f; /* src_high src_low dst_high dst_low */
-static const uint64_t echo = 0xfff0ffe7ffe8ffdf;   /* CHANNEL_IN CHANNEL_OUT */
 
-/* return 1 if index i already exists in layer */
+/* Purpose: detect repeated position index in the current network layer. */
 static int last(idx i)
 {
   static char used[SPACE_SIZE];
@@ -23,6 +22,7 @@ static int last(idx i)
   return 1;
 }
 
+/* Purpose: grow one network layer storage to hold requested pair count. */
 static void layer_reserve(layer *l, size_t need)
 {
   if(need <= l->cap)
@@ -38,6 +38,7 @@ static void layer_reserve(layer *l, size_t need)
   l->cap = cap;
 }
 
+/* Purpose: grow network layer-array storage to requested layer count. */
 static void network_reserve(network *n, size_t need)
 {
   if(need <= n->cap)
@@ -53,6 +54,7 @@ static void network_reserve(network *n, size_t need)
   n->cap = cap;
 }
 
+/* Purpose: append one empty layer to the sorting network. */
 static void network_add_layer(network *n)
 {
   network_reserve(n, n->count + 1);
@@ -60,12 +62,14 @@ static void network_add_layer(network *n)
   ++n->count;
 }
 
+/* Purpose: return the most recent network layer. */
 static layer *network_last_layer(network *n)
 {
   E(n->count == 0, "internal error: missing network layer");
   return &n->layers[n->count - 1];
 }
 
+/* Purpose: append one comparator pair to the current network layer. */
 static void network_push_pair(network *n, idx a, idx b)
 {
   layer *l = network_last_layer(n);
@@ -73,6 +77,7 @@ static void network_push_pair(network *n, idx a, idx b)
   l->pairs[l->count++] = (pair){a, b};
 }
 
+/* Purpose: release all memory that belongs to the sorting network. */
 static void network_free(network *n)
 {
   if(!n)
@@ -86,14 +91,28 @@ static void network_free(network *n)
   n->cap = 0;
 }
 
-/* read sorter pair. return 1 if pair read ok */
+/* Purpose: read one comparator pair from sorter text stream. */
 static int read_pair(FILE *sorter, idx *i, idx *k)
 {
   int c = fscanf(sorter, "%hu%hu", i, k);
   return c != 2 || feof(sorter) ? 0 : 1;
 }
 
-/* deserialize sorter to a separate network fabric */
+/* Purpose: finalize network by dropping an empty tail layer if present. */
+static void trim_empty_tail_layer(network *net)
+{
+  if(net->count == 0)
+    return;
+
+  layer *tail = &net->layers[net->count - 1];
+  if(tail->count == 0)
+  {
+    free(tail->pairs);
+    --net->count;
+  }
+}
+
+/* Purpose: load sorter pairs into layered network fabric representation. */
 static void sorter_to_network(machine *vm1, FILE *sorter)
 {
   idx l = 0,
@@ -121,25 +140,22 @@ static void sorter_to_network(machine *vm1, FILE *sorter)
     E(n >= SPACE_SIZE, "number of pairs of layer is too big");
   }
 
-  if(vm1->fabric.count > 0 && vm1->fabric.layers[vm1->fabric.count - 1].count == 0)
-  {
-    free(vm1->fabric.layers[vm1->fabric.count - 1].pairs);
-    --vm1->fabric.count;
-  }
+  trim_empty_tail_layer(&vm1->fabric);
 }
 
-/* read one byte from input channel. return 0 if ok */
+/* Purpose: read one byte from input channel in address space. */
 static int channel_read(machine *vm1)
 {
   return fread(&vm1->space[CHANNEL_IN], 1, 1, stdin) == 1 ? 0 : -1;
 }
 
-/* write one byte to output channel. return 0 if ok */
+/* Purpose: write one byte to output channel in address space. */
 static int channel_write(machine *vm1)
 {
   return fwrite(&vm1->space[CHANNEL_OUT], 1, 1, stdout) == 1 ? 0 : -1;
 }
 
+/* Purpose: read one machine word from packed address space bytes. */
 static idx read_word(const machine *vm1, idx word)
 {
   idx value;
@@ -147,44 +163,32 @@ static idx read_word(const machine *vm1, idx word)
   return value;
 }
 
-static void write_word(machine *vm1, idx word, idx value)
+/* Purpose: validate command-line arguments for vm1 run mode. */
+static void parse_args_or_die(int argc)
 {
-  memcpy(vm1->space + word * sizeof value, &value, sizeof value);
+  E(argc != 2, HELP);
 }
 
-static void write_instruction(machine *vm1, idx slot, idx dst_low, idx dst_high, idx src_low, idx src_high)
+/* Purpose: assign invariant origin index to every address-space position. */
+static void init_origin_keys(machine *vm1)
 {
-  idx off = (idx)(slot * EDGES * WAYS);
-
-  write_word(vm1, off + 0, dst_low);
-  write_word(vm1, off + 1, dst_high);
-  write_word(vm1, off + 2, src_low);
-  write_word(vm1, off + 3, src_high);
+  for(idx i = 0; i < SPACE_SIZE; ++i)
+    vm1->subspace[i].key.origin = i;
 }
 
-static void clear_processor(machine *vm1)
+/* Purpose: copy built-in loader instruction into processor area start. */
+static void install_loader(machine *vm1)
 {
-  size_t bytes = PROCESSOR_N * EDGES * WAYS * sizeof(idx);
-  if(bytes > sizeof vm1->space)
-    bytes = sizeof vm1->space;
-  memset(vm1->space, 0, bytes);
+#define INSTR_BYTES (EDGES * WAYS * sizeof(idx))
+  if(INSTR_BYTES <= sizeof vm1->space)
+    memmove(vm1->space, &loader, INSTR_BYTES);
+#undef INSTR_BYTES
 }
 
-static void install_space_test(machine *vm1)
-{
-  clear_processor(vm1);
-
-  write_instruction(vm1, 0, TEST_BUF0 - 1, TEST_BUF0 + CHAR_BIT, CHANNEL_IN_LO - 1, CHANNEL_IN_HI);
-  write_instruction(vm1, 1, TEST_BUF1 - 1, TEST_BUF1 + CHAR_BIT, TEST_BUF0 - 1, TEST_BUF0 + CHAR_BIT);
-  write_instruction(vm1, 2, CHANNEL_OUT_LO - 1, CHANNEL_OUT_HI, TEST_BUF1 - 1, TEST_BUF1 + CHAR_BIT);
-}
-
-/* machine hardware construction */
+/* Purpose: allocate and initialize full machine state from input sorter file. */
 static machine *allocate_machine(int argc, char **argv)
 {
-  idx i;
-  E(argc != 2 && argc != 3, HELP);
-  E(argc == 3 && strcmp(argv[2], "test") != 0, HELP);
+  parse_args_or_die(argc);
 
   machine *vm1 = calloc(1, sizeof *vm1);
   E(vm1 == NULL, "cannot allocate machine memory");
@@ -196,257 +200,254 @@ static machine *allocate_machine(int argc, char **argv)
   sorter_to_network(vm1, sorter);
   fclose(sorter);
 
-  /* initialize indices */
-  for(i = 0; i < SPACE_SIZE; ++i)
-    vm1->subspace[i].key.origin = i;
-
-  /* HARDCODED: set loader, echo */
-#define I (EDGES * WAYS * sizeof(idx))  /* instruction size */
-  if(I <= sizeof vm1->space)
-    memmove(vm1->space, &loader, I);
-  if(PROCESSOR_N * I + I <= sizeof vm1->space)
-    memmove(vm1->space + PROCESSOR_N * I, &echo, I);
-
-  if(argc == 3)
-    install_space_test(vm1);
+  init_origin_keys(vm1);
+  install_loader(vm1);
 
   return vm1;
 }
 
-/* subspace initialization from processor, channels and register */
-static void i1(machine *vm1)
+/* Purpose: commit destination-bit updates and load current bits into subspace. */
+static void sync_space_and_subspace(machine *vm1)
 {
-  idx i;
-
-  /* copy subspace processed data to space and space data to process to subspace */
-  for(i = 0; i < SPACE_SIZE; ++i)
+  for(idx i = 0; i < SPACE_SIZE; ++i)
     if(vm1->subspace[i].role == 1)
       SETBIT(vm1->space[i / CHAR_BIT], i % CHAR_BIT, vm1->subspace[i].value);
     else
       vm1->subspace[i].value = GETBIT(vm1->space[i / CHAR_BIT], i % CHAR_BIT);
+}
 
-  /* initialize role, active flag, and sortable key */
-  for(i = 0; i < SPACE_SIZE; ++i)
+/* Purpose: clear per-cycle activity flags and restore default sort keys. */
+static void reset_stage1_state(machine *vm1)
+{
+  for(idx i = 0; i < SPACE_SIZE; ++i)
   {
     vm1->subspace[i].role = 0;
     vm1->subspace[i].active = 0;
     vm1->subspace[i].key.sort = vm1->subspace[i].key.origin;
   }
+}
 
-  /* initialize search of intervals from processor */
+/* Purpose: return bounded processor region length in idx words. */
+static idx program_word_limit(const machine *vm1)
+{
   idx instruction_words = (idx)(sizeof vm1->space / sizeof(idx));
   idx processor_words = PROCESSOR_N * EDGES * WAYS;
-  idx words = processor_words < instruction_words ? processor_words : instruction_words;
+  return processor_words < instruction_words ? processor_words : instruction_words;
+}
 
-  for(i = 0; i + EDGES * WAYS <= words; i += EDGES * WAYS)
+/* Purpose: seed destination and source interval markers for one instruction. */
+static void seed_interval_pair(machine *vm1, idx base_word)
+{
+  idx dst_low = read_word(vm1, base_word);
+  idx dst_high = read_word(vm1, base_word + 1);
+  idx src_low = read_word(vm1, base_word + 2);
+  idx src_high = read_word(vm1, base_word + 3);
+
+  if(src_low == src_high)
+    return;
+
+  vm1->subspace[base_word].key.low = dst_low;
+  vm1->subspace[base_word].key.high = dst_high;
+  vm1->subspace[base_word].key.partner = src_low;
+  vm1->subspace[base_word].role = 0;
+  vm1->subspace[base_word].active = 1;
+
+  vm1->subspace[base_word + 1].key.low = src_low;
+  vm1->subspace[base_word + 1].key.high = src_high;
+  vm1->subspace[base_word + 1].key.partner = dst_low;
+  vm1->subspace[base_word + 1].role = 1;
+  vm1->subspace[base_word + 1].active = 1;
+}
+
+/* Purpose: scan processor program area and seed all interval descriptors. */
+static void seed_intervals_from_program(machine *vm1)
+{
+  idx words = program_word_limit(vm1);
+  for(idx i = 0; i + EDGES * WAYS <= words; i += EDGES * WAYS)
+    seed_interval_pair(vm1, i);
+}
+
+/* Purpose: initialize stage 1 of two-stage addressing for one cycle. */
+static void stage1_init(machine *vm1)
+{
+  sync_space_and_subspace(vm1);
+  reset_stage1_state(vm1);
+  seed_intervals_from_program(vm1);
+}
+
+/* Purpose: copy interval metadata from one position to another position. */
+static inline void copy_pos(machine *vm1, idx dst, idx src)
+{
+  vm1->subspace[dst].key.low = vm1->subspace[src].key.low;
+  vm1->subspace[dst].key.high = vm1->subspace[src].key.high;
+  vm1->subspace[dst].key.partner = vm1->subspace[src].key.partner;
+  vm1->subspace[dst].role = vm1->subspace[src].role;
+  vm1->subspace[dst].active = 1;
+}
+
+/* Purpose: move interval metadata and clear source position activity flags. */
+static inline void move_pos(machine *vm1, idx dst, idx src)
+{
+  copy_pos(vm1, dst, src);
+  vm1->subspace[src].active = 0;
+  vm1->subspace[src].role = 0;
+}
+
+/* Purpose: apply stage 1 propagation rules for active left position. */
+static void stage1_from_left(machine *vm1, idx left, idx right)
+{
+  if(vm1->subspace[left].active == 0)
+    return;
+
+  if(vm1->subspace[left].key.low > left
+    && vm1->subspace[left].key.low > right)
   {
-    /* h/w solution would just be properly conducted wires */
-    idx dst_low = read_word(vm1, i);
-    idx dst_high = read_word(vm1, i + 1);
-    idx src_low = read_word(vm1, i + 2);
-    idx src_high = read_word(vm1, i + 3);
-
-    /* skip empty instruction */
-    if(src_low == src_high)
-      continue;
-
-    /* initialize from dst */
-    vm1->subspace[i].key.low = dst_low;
-    vm1->subspace[i].key.high = dst_high;
-    vm1->subspace[i].key.partner = src_low;
-    vm1->subspace[i].role = 0;
-    vm1->subspace[i].active = 1;
-
-    /* initialize from src */
-    vm1->subspace[i + 1].key.low = src_low;
-    vm1->subspace[i + 1].key.high = src_high;
-    vm1->subspace[i + 1].key.partner = dst_low;
-    vm1->subspace[i + 1].role = 1;
-    vm1->subspace[i + 1].active = 1;
+    move_pos(vm1, right, left);
+  }
+  else if(vm1->subspace[left].key.low > left
+    && right > vm1->subspace[left].key.low
+    && vm1->subspace[left].key.high > right)
+  {
+    move_pos(vm1, right, left);
+    vm1->subspace[right].key.sort = vm1->subspace[left].key.partner;
+  }
+  else if(left > vm1->subspace[left].key.low
+    && vm1->subspace[left].key.high > right)
+  {
+    copy_pos(vm1, right, left);
+    vm1->subspace[right].key.sort = vm1->subspace[left].key.partner;
   }
 }
 
-/* copy attributes from position b to position a */
-static inline void copy_pos(machine *vm1, idx a, idx b)
+/* Purpose: apply stage 1 propagation rules for active right position. */
+static void stage1_from_right(machine *vm1, idx left, idx right)
 {
-  vm1->subspace[a].key.low = vm1->subspace[b].key.low;
-  vm1->subspace[a].key.high = vm1->subspace[b].key.high;
-  vm1->subspace[a].key.partner = vm1->subspace[b].key.partner;
-  vm1->subspace[a].role = vm1->subspace[b].role;
-  vm1->subspace[a].active = 1;
+  if(vm1->subspace[right].active == 0)
+    return;
+
+  if(right > vm1->subspace[right].key.high
+    && left > vm1->subspace[right].key.high)
+  {
+    move_pos(vm1, left, right);
+  }
+  else if(right > vm1->subspace[right].key.high
+    && vm1->subspace[right].key.low > left
+    && left > vm1->subspace[right].key.high)
+  {
+    move_pos(vm1, left, right);
+    vm1->subspace[left].key.sort = vm1->subspace[right].key.partner;
+  }
+  else if(vm1->subspace[right].key.high > right
+    && left > vm1->subspace[right].key.low)
+  {
+    copy_pos(vm1, left, right);
+    vm1->subspace[left].key.sort = vm1->subspace[right].key.partner;
+  }
 }
 
-/* move attributes from position b to position a */
-static inline void move_pos(machine *vm1, idx a, idx b)
+/* Purpose: apply stage 1 pair operation across one network comparator pair. */
+static void stage1_pair(machine *vm1, idx i, idx k)
 {
-  copy_pos(vm1, a, b);
-  vm1->subspace[b].active = 0;
-  vm1->subspace[b].role = 0;
-}
-
-/* intervals creation */
-static void f1(machine *vm1, idx i, idx k)
-{
-  /* up */
   if(vm1->subspace[i].active == 1)
-  {
-    if(vm1->subspace[i].key.low > i
-      && vm1->subspace[i].key.low > k)
-    {
-      move_pos(vm1, k, i);
-    }
-    else if(vm1->subspace[i].key.low > i
-      && k > vm1->subspace[i].key.low
-      && vm1->subspace[i].key.high > k)
-    {
-      move_pos(vm1, k, i);
-      vm1->subspace[k].key.sort = vm1->subspace[i].key.partner;
-    }
-    else if(i > vm1->subspace[i].key.low
-      && vm1->subspace[i].key.high > k)
-    {
-      copy_pos(vm1, k, i);
-      vm1->subspace[k].key.sort = vm1->subspace[i].key.partner;
-    }
-  }
-
-  /* down */
+    stage1_from_left(vm1, i, k);
   else if(vm1->subspace[k].active == 1)
-  {
-    if(k > vm1->subspace[k].key.high
-      && i > vm1->subspace[k].key.high)
-    {
-      move_pos(vm1, i, k);
-    }
-    else if(k > vm1->subspace[k].key.high
-      && vm1->subspace[k].key.low > i
-      && i > vm1->subspace[k].key.high)
-    {
-      move_pos(vm1, i, k);
-      vm1->subspace[i].key.sort = vm1->subspace[k].key.partner;
-    }
-    else if(vm1->subspace[k].key.high > k
-      && i > vm1->subspace[k].key.low)
-    {
-      copy_pos(vm1, i, k);
-      vm1->subspace[i].key.sort = vm1->subspace[k].key.partner;
-    }
-  }
+    stage1_from_right(vm1, i, k);
 }
 
-/* move invariant position index to the partner-key field */
-static void i2(machine *vm1)
+/* Purpose: preload partner field with invariant origin index for stage 2. */
+static void stage2_init(machine *vm1)
 {
   idx i;
   for(i = 0; i < SPACE_SIZE; ++i)
     vm1->subspace[i].key.partner = vm1->subspace[i].key.origin;
 }
 
-/* transposition of intervals with copy of values and invariant indices */
-static void f2(machine *vm1, idx i, idx k)
+/* Purpose: swap sort and partner keys between two positions. */
+static inline void swap_sort_and_partner(machine *vm1, idx left, idx right)
 {
-  /* check if transposition needed */
-  if(vm1->subspace[i].key.sort > vm1->subspace[k].key.sort)
+  idx tmp_sort = vm1->subspace[left].key.sort;
+  idx tmp_partner = vm1->subspace[left].key.partner;
+  vm1->subspace[left].key.sort = vm1->subspace[right].key.sort;
+  vm1->subspace[right].key.sort = tmp_sort;
+  vm1->subspace[left].key.partner = vm1->subspace[right].key.partner;
+  vm1->subspace[right].key.partner = tmp_partner;
+}
+
+/* Purpose: move value ownership along swap direction for active interval cells. */
+static inline void move_value_and_role(machine *vm1, idx left, idx right)
+{
+  if(vm1->subspace[left].active == 0)
+    return;
+
+  if(vm1->subspace[left].role == 1)
   {
-    /* transpose sortable keys */
-    vm1->subspace[k].key.low = vm1->subspace[i].key.sort;
-    vm1->subspace[i].key.low = vm1->subspace[k].key.sort;
-    vm1->subspace[i].key.sort = vm1->subspace[i].key.low;
-    vm1->subspace[k].key.sort = vm1->subspace[k].key.low;
-
-    /* transpose invariant position indices */
-    vm1->subspace[k].key.low = vm1->subspace[i].key.partner;
-    vm1->subspace[i].key.low = vm1->subspace[k].key.partner;
-    vm1->subspace[i].key.partner = vm1->subspace[i].key.low;
-    vm1->subspace[k].key.partner = vm1->subspace[k].key.low;
-
-    /* check if transposition is inside interval */
-    if(vm1->subspace[i].active == 0)
-      return;
-
-    /* copy value, move role up */
-    if(vm1->subspace[i].role == 1)
-    {
-      vm1->subspace[k].value = vm1->subspace[i].value;
-      vm1->subspace[k].role = 1;
-      vm1->subspace[i].role = 0;
-    }
-    /* copy value, move role down */
-    else
-    {
-      vm1->subspace[i].value = vm1->subspace[k].value;
-      vm1->subspace[k].role = 0;
-      vm1->subspace[i].role = 1;
-    }
+    vm1->subspace[right].value = vm1->subspace[left].value;
+    vm1->subspace[right].role = 1;
+    vm1->subspace[left].role = 0;
+  }
+  else
+  {
+    vm1->subspace[left].value = vm1->subspace[right].value;
+    vm1->subspace[right].role = 0;
+    vm1->subspace[left].role = 1;
   }
 }
 
-/* mechanism of a computing tact */
-static void tact(machine *vm1, void (*f)(machine*, idx, idx))
+/* Purpose: apply stage 2 pair operation across one network comparator pair. */
+static void stage2_pair(machine *vm1, idx i, idx k)
+{
+  if(vm1->subspace[i].key.sort <= vm1->subspace[k].key.sort)
+    return;
+
+  swap_sort_and_partner(vm1, i, k);
+  move_value_and_role(vm1, i, k);
+}
+
+/* Purpose: apply one pair-function to all comparator pairs in all layers. */
+static void run_network(machine *vm1, void (*stage_pair)(machine*, idx, idx))
 {
   for(size_t l = 0; l < vm1->fabric.count; ++l)
     for(size_t p = 0; p < vm1->fabric.layers[l].count; ++p)
-      f(vm1, vm1->fabric.layers[l].pairs[p].a, vm1->fabric.layers[l].pairs[p].b);
+      stage_pair(vm1, vm1->fabric.layers[l].pairs[p].a, vm1->fabric.layers[l].pairs[p].b);
 }
 
-static void compute(machine *vm1, void (**ff)(machine*), void (**f)(machine*, idx, idx), idx n)
+/* Purpose: execute one full two-stage addressing cycle. */
+static void run_cycle(machine *vm1,
+                      void (**stage_init)(machine*),
+                      void (**stage_pair)(machine*, idx, idx),
+                      idx n)
 {
   for(idx t = 0; t < n; ++t)
   {
-    ff[t](vm1);        /* initialize tact */
-    tact(vm1, f[t]);   /* perform tact */
+    stage_init[t](vm1);
+    run_network(vm1, stage_pair[t]);
   }
 }
 
-static void run_echo(machine *vm1, void (**ff)(machine*), void (**f)(machine*, idx, idx), idx n)
+/* Purpose: run channel-driven compute loop with bounded cycle count. */
+static void run_channels(machine *vm1,
+                         void (**stage_init)(machine*),
+                         void (**stage_pair)(machine*, idx, idx),
+                         idx n)
 {
-  /* initialize processor code before the first channel byte is accepted */
-  compute(vm1, ff, f, n);
-
-  int have_output = 0;
   uint64_t life = LIFE;
-
   while(life-- && channel_read(vm1) == 0)
   {
-    compute(vm1, ff, f, n);
-
-    if(have_output && channel_write(vm1) != 0)
-      break;
-    have_output = 1;
-  }
-
-  if(have_output)
-  {
-    for(int flush = 0; flush < 2; ++flush)
-      compute(vm1, ff, f, n);
-    channel_write(vm1);
-  }
-}
-
-static void run_space_test(machine *vm1, void (**ff)(machine*), void (**f)(machine*, idx, idx), idx n)
-{
-  uint64_t life = LIFE;
-
-  while(life >= TEST_CYCLES && channel_read(vm1) == 0)
-  {
-    for(int i = 0; i < TEST_CYCLES; ++i)
-      compute(vm1, ff, f, n);
+    run_cycle(vm1, stage_init, stage_pair, n);
     if(channel_write(vm1) != 0)
       break;
-    life -= TEST_CYCLES;
   }
 }
 
+/* Purpose: build machine, run channel workload, and release all resources. */
 int main(int argc, char **argv)
 {
   machine *vm1 = allocate_machine(argc, argv);
-  void (*ff[])(machine*) = {i1, i2};
-  void (*f[])(machine*, idx, idx) = {f1, f2};
+  /* stage_init[t] sets per-stage state, stage_pair[t] applies one pair op. */
+  void (*stage_init[])(machine*) = {stage1_init, stage2_init};
+  void (*stage_pair[])(machine*, idx, idx) = {stage1_pair, stage2_pair};
 
-  if(argc == 3)
-    run_space_test(vm1, ff, f, ARR_SZ(f));
-  else
-    run_echo(vm1, ff, f, ARR_SZ(f));
+  run_channels(vm1, stage_init, stage_pair, ARR_SZ(stage_pair));
 
   network_free(&vm1->fabric);
   free(vm1);
