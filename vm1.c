@@ -360,9 +360,10 @@ int main(int argc, char **argv)
   }
 
   int have_output = 0;
+  uint64_t life = LIFE;
 
   /* parallel address copy emulation */
-  while(channel_read(vm1) == 0)
+  while(life-- && channel_read(vm1) == 0)
   {
     for(t = 0; t < ARR_SZ(f); ++t)
     {

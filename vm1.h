@@ -21,6 +21,9 @@
 #ifndef PROCESSOR_N
 #define PROCESSOR_N 128     /* number of instructions in processor (> 1) */
 #endif
+#ifndef LIFE
+#define LIFE 0x10           /* maximum number of emulator compute cycles */
+#endif
 #define INDEX_SIZE LOG2(SPACE_SIZE)
 #define LAYER_N (LOG2(SPACE_SIZE) * (LOG2(SPACE_SIZE) + 1) / 2)
 #define CHANNEL_IN  (SPACE_SIZE / CHAR_BIT - 1)
