@@ -1,13 +1,15 @@
 /*
- * BLOCK SORTING NETWORK GENERATOR
+ * Pairwise sorting network generator (stable, for 2-phase positional addressing)
  *
- * Recursive odd-even mergesort with a 16-input optimal base network.
- * Generates sorter pairs for an arbitrary working set by:
- * 1) building network for next power-of-two size;
- * 2) filtering pairs outside requested position range.
+ * Generates a pairwise network (power-of-two only, padded otherwise).
+ * Pairwise is stable: equal keys keep order, so 2-phase addressing works
+ * without the third reordering step.
  *
- * The 16-input network below matches the 60-comparator, 10-layer network
- * commonly attributed to Green.
+ * For arbitrary SPACE_SIZE:
+ *  1) build pairwise network for next power of two >= SPACE_SIZE
+ *  2) if SPACE_SIZE is not power of two: filter pairs with a,b < SPACE_SIZE
+ *     into a sequence, then repack greedily by wire readiness (like seq_pack)
+ *  3) print layers with blank line between layers
  */
 
 #include <stdint.h>
@@ -15,277 +17,125 @@
 #include <stdlib.h>
 #include <string.h>
 
-typedef struct {
-  uint32_t a;
-  uint32_t b;
-} pair_t;
+typedef struct { uint32_t left, right; } pair_t;
+typedef struct { pair_t *pair; size_t count, cap; } layer_t;
+typedef struct { layer_t *layer; size_t layers, cap; } net_t;
+typedef struct { pair_t *pair; size_t count, cap; } seq_t;
 
-typedef struct {
-  pair_t *pairs;
-  size_t count;
-  size_t cap;
-} layer_t;
+static void die(const char *msg){ fputs(msg, stderr); fputc('\n', stderr); exit(EXIT_FAILURE); }
 
-typedef struct {
-  layer_t *layers;
-  size_t count;
-  size_t cap;
-} network_t;
-
-static void die(const char *msg)
-{
-  fputs(msg, stderr);
-  fputc('\n', stderr);
-  exit(EXIT_FAILURE);
+static uint32_t parse_u32(const char *s){
+    char *end=NULL; unsigned long v=strtoul(s,&end,10);
+    if(s[0]=='\0' || (end && *end!='\0') || v>UINT32_MAX) die("invalid size");
+    return (uint32_t)v;
+}
+static int is_pow2(uint32_t n){ return n!=0 && (n&(n-1))==0; }
+static uint32_t next_pow2(uint32_t n){
+    if(n<=1) return 1;
+    --n; n|=n>>1; n|=n>>2; n|=n>>4; n|=n>>8; n|=n>>16; return n+1;
 }
 
-static uint32_t parse_u32(const char *s)
-{
-  char *end = NULL;
-  unsigned long v = strtoul(s, &end, 10);
-  if(s[0] == '\0' || (end && *end != '\0') || v > UINT32_MAX)
-    die("invalid size");
-  return (uint32_t)v;
+/* seq helpers */
+static void seq_add(seq_t *s, uint32_t a, uint32_t b){
+    if(a==b) return;
+    if(s->count>=s->cap){ size_t cap=s->cap?s->cap*2:64; pair_t *p=realloc(s->pair, cap*sizeof *p); if(!p) die("alloc seq"); s->pair=p; s->cap=cap; }
+    s->pair[s->count++]=(pair_t){a,b};
 }
+static void seq_free(seq_t *s){ free(s->pair); s->pair=NULL; s->count=s->cap=0; }
 
-static int is_pow2(uint32_t n)
-{
-  return n != 0 && (n & (n - 1)) == 0;
+/* net helpers */
+static void net_reserve(net_t *net, size_t need){
+    if(need<=net->cap) return;
+    size_t cap=net->cap?net->cap:8;
+    while(cap<need) cap*=2;
+    layer_t *l=realloc(net->layer, cap*sizeof *l);
+    if(!l) die("alloc net");
+    for(size_t i=net->cap;i<cap;i++) memset(&l[i],0,sizeof l[i]);
+    net->layer=l; net->cap=cap;
 }
-
-static uint32_t next_pow2(uint32_t n)
-{
-  if(n <= 1)
-    return 1;
-
-  --n;
-  n |= n >> 1;
-  n |= n >> 2;
-  n |= n >> 4;
-  n |= n >> 8;
-  n |= n >> 16;
-  return n + 1;
+static void net_ensure_layer(net_t *net, size_t idx){
+    if(idx>=net->cap) net_reserve(net, idx+1);
+    if(idx>=net->layers){ net->layers=idx+1; }
 }
-
-static void layer_reserve(layer_t *layer, size_t need)
-{
-  if(need <= layer->cap)
-    return;
-
-  size_t cap = layer->cap ? layer->cap : 8;
-  while(cap < need)
-    cap *= 2;
-
-  pair_t *pairs = realloc(layer->pairs, cap * sizeof *pairs);
-  if(!pairs)
-    die("cannot allocate layer");
-  layer->pairs = pairs;
-  layer->cap = cap;
+static void net_add(net_t *net, size_t layer, uint32_t a, uint32_t b){
+    if(a==b) return;
+    net_ensure_layer(net, layer);
+    layer_t *l=&net->layer[layer];
+    if(l->count>=l->cap){ size_t cap=l->cap?l->cap*2:8; pair_t *p=realloc(l->pair, cap*sizeof *p); if(!p) die("alloc layer"); l->pair=p; l->cap=cap; }
+    l->pair[l->count++]=(pair_t){a,b};
 }
-
-static void network_reserve(network_t *net, size_t need)
-{
-  if(need <= net->cap)
-    return;
-
-  size_t cap = net->cap ? net->cap : 8;
-  while(cap < need)
-    cap *= 2;
-
-  layer_t *layers = realloc(net->layers, cap * sizeof *layers);
-  if(!layers)
-    die("cannot allocate network");
-  net->layers = layers;
-  net->cap = cap;
+static void net_free(net_t *net){
+    if(!net) return;
+    for(size_t i=0;i<net->layers;i++) free(net->layer[i].pair);
+    free(net->layer); net->layer=NULL; net->layers=net->cap=0;
 }
-
-static void layer_push(layer_t *layer, uint32_t a, uint32_t b)
-{
-  layer_reserve(layer, layer->count + 1);
-  layer->pairs[layer->count++] = (pair_t){a, b};
-}
-
-static void network_init(network_t *net)
-{
-  memset(net, 0, sizeof *net);
-}
-
-static void layer_free(layer_t *layer)
-{
-  free(layer->pairs);
-  layer->pairs = NULL;
-  layer->count = 0;
-  layer->cap = 0;
-}
-
-static void network_free(network_t *net)
-{
-  if(!net)
-    return;
-  for(size_t i = 0; i < net->count; ++i)
-    layer_free(&net->layers[i]);
-  free(net->layers);
-  net->layers = NULL;
-  net->count = 0;
-  net->cap = 0;
-}
-
-static void network_add_layer(network_t *net)
-{
-  network_reserve(net, net->count + 1);
-  memset(&net->layers[net->count], 0, sizeof net->layers[net->count]);
-  ++net->count;
-}
-
-static layer_t *network_last_layer(network_t *net)
-{
-  if(net->count == 0)
-    die("internal error: missing layer");
-  return &net->layers[net->count - 1];
-}
-
-static void network_push_pair(network_t *net, uint32_t a, uint32_t b)
-{
-  layer_push(network_last_layer(net), a, b);
-}
-
-static void network_append_layer_copy(network_t *dst, const layer_t *src, uint32_t offset)
-{
-  network_add_layer(dst);
-  layer_t *out = network_last_layer(dst);
-  for(size_t i = 0; i < src->count; ++i)
-    layer_push(out, src->pairs[i].a + offset, src->pairs[i].b + offset);
-}
-
-static network_t make_base16(uint32_t base)
-{
-  static const pair_t layers[][8] = {
-    {{0,13},{1,12},{2,15},{3,14},{4,8},{5,6},{7,11},{9,10}},
-    {{0,5},{1,7},{2,9},{3,4},{6,13},{8,14},{10,15},{11,12}},
-    {{0,1},{2,3},{4,5},{6,8},{7,9},{10,11},{12,13},{14,15}},
-    {{0,2},{1,3},{4,10},{5,11},{6,7},{8,9},{12,14},{13,15}},
-    {{1,2},{3,12},{4,6},{5,7},{8,10},{9,11},{13,14}},
-    {{1,4},{2,6},{5,8},{7,10},{9,13},{11,14}},
-    {{2,4},{3,6},{9,12},{11,13}},
-    {{3,5},{6,8},{7,9},{10,12}},
-    {{3,4},{5,6},{7,8},{9,10},{11,12}},
-    {{6,7},{8,9}},
-  };
-  static const size_t counts[] = {8, 8, 8, 8, 7, 6, 4, 4, 5, 2};
-
-  network_t net;
-  network_init(&net);
-  for(size_t l = 0; l < sizeof counts / sizeof counts[0]; ++l) {
-    network_add_layer(&net);
-    layer_t *layer = network_last_layer(&net);
-    for(size_t i = 0; i < counts[l]; ++i)
-      layer_push(layer, base + layers[l][i].a, base + layers[l][i].b);
-  }
-  return net;
-}
-
-static network_t merge_network(uint32_t base, uint32_t n, uint32_t step)
-{
-  if(step * 2 < n) {
-    network_t left = merge_network(base, n, step * 2);
-    network_t right = merge_network(base + step, n, step * 2);
-    if(left.count != right.count)
-      die("internal error: merge depth mismatch");
-
-    network_t net;
-    network_init(&net);
-    for(size_t l = 0; l < left.count; ++l) {
-      network_add_layer(&net);
-      layer_t *out = network_last_layer(&net);
-      for(size_t i = 0; i < left.layers[l].count; ++i)
-        layer_push(out, left.layers[l].pairs[i].a, left.layers[l].pairs[i].b);
-      for(size_t i = 0; i < right.layers[l].count; ++i)
-        layer_push(out, right.layers[l].pairs[i].a, right.layers[l].pairs[i].b);
+static void net_print(const net_t *net){
+    for(size_t i=0;i<net->layers;i++){
+        for(size_t j=0;j<net->layer[i].count;j++) printf("%u %u\n", net->layer[i].pair[j].left, net->layer[i].pair[j].right);
+        if(i+1<net->layers) putchar('\n');
     }
-
-    network_free(&left);
-    network_free(&right);
-
-    network_add_layer(&net);
-    layer_t *tail = network_last_layer(&net);
-    for(uint32_t i = base + step; i + step < base + n; i += step * 2)
-      layer_push(tail, i, i + step);
-    return net;
-  }
-
-  network_t net;
-  network_init(&net);
-  network_add_layer(&net);
-  network_push_pair(&net, base, base + step);
-  return net;
 }
 
-static network_t sort_network(uint32_t base, uint32_t n)
-{
-  if(n == 16)
-    return make_base16(base);
-
-  uint32_t half = n / 2;
-  network_t left = sort_network(base, half);
-  network_t right = sort_network(base + half, half);
-  if(left.count != right.count)
-    die("internal error: sort depth mismatch");
-
-  network_t net;
-  network_init(&net);
-  for(size_t l = 0; l < left.count; ++l) {
-    network_add_layer(&net);
-    layer_t *out = network_last_layer(&net);
-    for(size_t i = 0; i < left.layers[l].count; ++i)
-      layer_push(out, left.layers[l].pairs[i].a, left.layers[l].pairs[i].b);
-    for(size_t i = 0; i < right.layers[l].count; ++i)
-      layer_push(out, right.layers[l].pairs[i].a, right.layers[l].pairs[i].b);
-  }
-
-  network_free(&left);
-  network_free(&right);
-
-  network_t merge = merge_network(base, n, 1);
-  for(size_t l = 0; l < merge.count; ++l)
-    network_append_layer_copy(&net, &merge.layers[l], 0);
-  network_free(&merge);
-  return net;
+/* pairwise for power of two n */
+static net_t gen_pairwise_pow2(uint32_t n){
+    net_t out={0};
+    if(n==0 || n>65536) die("n out of range 1..65536");
+    for(uint32_t p=n/2; p>=1; p/=2){
+        size_t layer=out.layers;
+        net_ensure_layer(&out, layer);
+        for(uint32_t a=0;a<n;a+=p*2) for(uint32_t b=0;b<p;b++) net_add(&out, layer, a+b, a+b+p);
+        for(uint32_t q=n/2; q>=p*2; q/=2){
+            layer=out.layers;
+            net_ensure_layer(&out, layer);
+            for(uint32_t c=0;c<n;c+=p*2) for(uint32_t d=0;d<p;d++) if(c+d+q<n) net_add(&out, layer, c+d+p, c+d+q);
+        }
+        if(p==1) break;
+    }
+    return out;
 }
 
-static void print_network_trimmed(const network_t *net, uint32_t limit)
-{
-  for(size_t l = 0; l < net->count; ++l)
-    for(size_t i = 0; i < net->layers[l].count; ++i)
-      if(net->layers[l].pairs[i].a < limit
-         && net->layers[l].pairs[i].b < limit)
-        printf("%u %u\n",
-               net->layers[l].pairs[i].a,
-               net->layers[l].pairs[i].b);
+/* pack sequence greedily by wire readiness */
+static net_t seq_pack(const seq_t *seq, uint32_t wires){
+    net_t out={0};
+    uint32_t *ready=calloc(wires, sizeof *ready);
+    if(!ready) die("alloc ready");
+    for(size_t i=0;i<seq->count;i++){
+        uint32_t a=seq->pair[i].left, b=seq->pair[i].right;
+        uint32_t layer = ready[a] > ready[b] ? ready[a] : ready[b];
+        net_add(&out, layer, a, b);
+        ready[a]=ready[b]=layer+1;
+    }
+    free(ready);
+    return out;
 }
 
-int main(int argc, char **argv)
-{
-  uint32_t space_size = 65520;
-  uint32_t network_size;
+int main(int argc, char **argv){
+    uint32_t space_size=65520;
+    if(argc>2){ fputs("usage: sort2 [space_size]\n", stderr); return EXIT_FAILURE; }
+    if(argc==2) space_size=parse_u32(argv[1]);
+    if(space_size<2) die("space_size must be >=2");
+    if(space_size>65536) die("space_size max 65536");
 
-  if(argc > 2) {
-    fputs("usage: sort2 [space_size]\n", stderr);
-    return EXIT_FAILURE;
-  }
-  if(argc == 2)
-    space_size = parse_u32(argv[1]);
+    setvbuf(stdout,NULL,_IOFBF,1<<20);
 
-  if(space_size < 16)
-    die("space_size must be at least 16");
-
-  network_size = next_pow2(space_size);
-  if(!is_pow2(network_size))
-    die("internal error: next power-of-two failed");
-
-  setvbuf(stdout, NULL, _IOFBF, 1 << 20);
-
-  network_t net = sort_network(0, network_size);
-  print_network_trimmed(&net, space_size);
-  network_free(&net);
-  return EXIT_SUCCESS;
+    if(is_pow2(space_size)){
+        net_t net=gen_pairwise_pow2(space_size);
+        net_print(&net);
+        net_free(&net);
+        return EXIT_SUCCESS;
+    }
+    uint32_t padded=next_pow2(space_size);
+    net_t big=gen_pairwise_pow2(padded);
+    // filter into seq
+    seq_t seq={0};
+    for(size_t l=0;l<big.layers;l++) for(size_t k=0;k<big.layer[l].count;k++){
+        uint32_t a=big.layer[l].pair[k].left, b=big.layer[l].pair[k].right;
+        if(a<space_size && b<space_size) seq_add(&seq,a,b);
+    }
+    net_free(&big);
+    net_t packed=seq_pack(&seq, space_size);
+    seq_free(&seq);
+    net_print(&packed);
+    net_free(&packed);
+    return EXIT_SUCCESS;
 }

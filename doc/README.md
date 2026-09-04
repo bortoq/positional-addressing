@@ -7,7 +7,7 @@ Demo 2: intervals are addressed by *position* and moved by sorting, without arit
 
 ## Idea
 
-Copy `n` bits `src → dst` in parallel. Interval is half-open `[low,high)` with a `partner` (the paired interval). Addressing key per position: `low/high/partner/sort/origin`. Only operation on keys is `>` compare inside the sorting network. No addition, no indices as numbers.
+Copy `n` bits `src → dst` in parallel. Interval is open `(low,high)` (both bounds excluded) with a `partner` (the paired interval). Addressing key per position: `low/high/partner/sort/origin`. Only operation on keys is `>` compare inside the sorting network. No addition, no indices as numbers.
 
 Current demo: `SPACE_SIZE=65520`, 1 bit per position, `INDEX_SIZE=16`.
 
@@ -16,7 +16,7 @@ Current demo: `SPACE_SIZE=65520`, 1 bit per position, `INDEX_SIZE=16`.
 - `src/vm1.c` — two-phase addressing emulator
 - `src/vm1.h` — `machine`/`subspace`/`network`, `SPACE_SIZE`/`LIFE`/`CHANNEL_IN/OUT`
 - `src/loader.inc` — built-in loader `[dst_low,dst_high,src_low,src_high]`
-- `src/sort2.c` — odd-even mergesort generator
+- `src/sort2.c` — pairwise generator (stable)
 - `tools/mkldr1` — pack `.vm1` → `LDR1` (`LDR1 + u16 count/base + payload`)
 - `tools/copy3_to_vm1` — `n dst src` → `4` vm1 words
 - `examples/` — `echo.copy3`, `sort256_runtime.vm1`
@@ -64,11 +64,11 @@ while (life-- && !channel_read(vm1)) {
 3. write built-in loader (`src/loader.inc`, 8 bytes / 4 `idx` words) to `space[0]` if it fits.
 `CHANNEL_IN = SPACE_SIZE/8 -1`, `CHANNEL_OUT = -2` (last two bytes). EOF ends loop.
 
-## Sorting network
+## Sorting network (pairwise, stable)
 
-`sort2`:
-1. next pow2 `>= SPACE_SIZE`, 2. build full odd-even network, 3. emit only `a,b < SPACE_SIZE`.
-Text `sorter.txt`: `a b` per line. Current: 3,984,771 pairs, 136 layers, ≤32,760/layer.
+Pairwise is stable — equal keys keep order — so two phases are enough (no third reordering). `sort2`:
+1. next pow2 `>= SPACE_SIZE`, 2. build full pairwise network for that size, 3. if needed filter `a,b < SPACE_SIZE` and repack by wire readiness.
+Text `sorter.txt`: `a b` per line, blank line between layers. Current pairwise 65,520: ~3,997,174 lines (≈136 layers, ≤32,760/layer), filtered from 65,536 and repacked greedily.
 
 ## Testing
 
@@ -81,7 +81,7 @@ See `doc/hardware.md` for transistor/RTL estimates.
 ## Glossary
 
 - **position** — one bit slot, **subspace** — its state (`value/active/role/key`)
-- **key** — `low/high/partner/sort/origin`, **interval** — `[low,high)`
+- **key** — `low/high/partner/sort/origin`, **interval** — open `(low,high)` → bits `[low+1, high-1]`
 - **fabric/layer/pair** — network (`fabric.layers[l].pairs[p]`)
 - **stage/cycle** — phase / full `stage1+stage2`
 - **processor area** — interval instructions in `space`, **channel** — `CHANNEL_IN/OUT` bytes

@@ -3,9 +3,9 @@
 Positional addressing without arithmetic. Intervals are addressed by position, not by numbers — only lexicographic compare of keys via a sorting network.
 
 - **Problem:** copy `n` bits from `src` to `dst` in parallel for many intervals at once.
-- **Key:** interval `[low,high)` → `partner` (paired interval), `sort`/`origin`; hardware uses only `>` compare.
+- **Key:** interval `(low,high)` (open) → `partner` (paired interval), `sort`/`origin`; hardware uses only `>` compare.
 - **Mechanism:** two phases over the network: `stage1` marks intervals (`key.sort=partner`), `stage2` transposes and moves `value` by `role`.
-- **Network:** odd-even mergesort (`src/sort2.c`, 65,520 positions, 136 layers, filtered to `<SPACE_SIZE`).
+- **Network:** pairwise (stable) from `src/sort2.c`, 65,520 positions, 136 layers.
 
 This repo is the *addressing* demo. The address space itself is a separate project.
 

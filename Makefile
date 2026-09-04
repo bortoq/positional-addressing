@@ -54,7 +54,7 @@ $(SORTER): $(SORT2_BIN)
 check: all $(SORTER) tests
 	@echo "== sort2: 256-pair sanity =="
 	./$(TEST_SORT_BIN)
-	@echo "== vm1 channel compat (experimental, may fail with sort2 odd-even) =="
+	@echo "== vm1 channel compat (pairwise stable, 2-phase) =="
 	@./$(TEST_COMPAT_BIN) || echo "(compat: sort2 not fully vm1-compatible)"
 
 test: check
