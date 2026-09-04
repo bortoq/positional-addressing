@@ -18,12 +18,12 @@
 // ---------- helpers ----------
 
 static void die(const char *msg) {
-    fprintf(stderr, "copy3_to_vm1: %s\n", msg);
+    fprintf(stderr, "compile: %s\n", msg);
     exit(1);
 }
 
 static void die2(const char *msg, const char *arg) {
-    fprintf(stderr, "copy3_to_vm1: %s: %s\n", msg, arg);
+    fprintf(stderr, "compile: %s: %s\n", msg, arg);
     exit(1);
 }
 
@@ -69,7 +69,7 @@ int main(int argc, char **argv) {
     // guard: need both args
     if (argc < 3) {
         fprintf(stderr,
-                "usage: copy3_to_vm1 --in-copy3 FILE --out-vm1 FILE\n");
+                "usage: compile --in-copy3 FILE --out-vm1 FILE\n");
         return 2;
     }
     for (int i = 1; i < argc; i++) {
@@ -117,13 +117,13 @@ int main(int argc, char **argv) {
         }
         if (t) {
             fprintf(stderr,
-                    "copy3_to_vm1: %s:%d: expected 3 fields\n",
+                    "compile: %s:%d: expected 3 fields\n",
                     in_path, lineno);
             return 1;
         }
         if (ntok != 3) {
             fprintf(stderr,
-                    "copy3_to_vm1: %s:%d: expected 3 fields "
+                    "compile: %s:%d: expected 3 fields "
                     "'n dst src' got %d\n",
                     in_path, lineno, ntok);
             return 1;
@@ -133,21 +133,21 @@ int main(int argc, char **argv) {
         long n = parse_long(tok[0], &ok);
         if (!ok || n < 0) {
             fprintf(stderr,
-                    "copy3_to_vm1: %s:%d: n must be >=0\n",
+                    "compile: %s:%d: n must be >=0\n",
                     in_path, lineno);
             return 1;
         }
         long dst = parse_long(tok[1], &ok);
         if (!ok || dst < 0) {
             fprintf(stderr,
-                    "copy3_to_vm1: %s:%d: dst must be >=0\n",
+                    "compile: %s:%d: dst must be >=0\n",
                     in_path, lineno);
             return 1;
         }
         long src = parse_long(tok[2], &ok);
         if (!ok || src < 0) {
             fprintf(stderr,
-                    "copy3_to_vm1: %s:%d: src must be >=0\n",
+                    "compile: %s:%d: src must be >=0\n",
                     in_path, lineno);
             return 1;
         }
@@ -155,7 +155,7 @@ int main(int argc, char **argv) {
         long out[4];
         if (encode_vm1(n, dst, src, out)) {
             fprintf(stderr,
-                    "copy3_to_vm1: %s:%d: encoded word out of range\n",
+                    "compile: %s:%d: encoded word out of range\n",
                     in_path, lineno);
             return 1;
         }

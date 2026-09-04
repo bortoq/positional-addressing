@@ -13,8 +13,8 @@
  *
  * 2024-11-02, dmitri bortoq (bortoq@gmail.com), MIT license
  */
-#include "vm1.h"
-#include "loader.inc"
+#include "machine.h"
+#include "loader.h"
 
 // ---------- helpers ----------
 

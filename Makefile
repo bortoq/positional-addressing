@@ -3,19 +3,19 @@ CFLAGS  ?= -Wall -Wextra -pedantic -std=c11 -O2
 SPACE_SIZE ?= 65520
 
 SRC_DIR   = src
-VM1_SRC   = $(SRC_DIR)/vm1.c
-SORT_SRC = $(SRC_DIR)/sort.c
-MKLDR1_SRC = tools/mkldr1.c
-C3_SRC    = tools/copy3_to_vm1.c
-TEST_SORT_SRC = tests/test_sort256.c
-TEST_COMPAT_SRC = tests/test_compat.c
+VM1_SRC   = $(SRC_DIR)/machine.c
+SORT_SRC = $(SRC_DIR)/network.c
+MKLDR1_SRC = tools/loader.c
+C3_SRC    = tools/compile.c
+TEST_SORT_SRC = tests/test_network.c
+TEST_COMPAT_SRC = tests/test_channel.c
 
 VM1_BIN   = vm1
 SORT_BIN = sort
-MKLDR1_BIN = tools/mkldr1
-C3_BIN    = tools/copy3_to_vm1
-TEST_SORT_BIN = tests/test_sort256
-TEST_COMPAT_BIN = tests/test_compat
+MKLDR1_BIN = tools/loader
+C3_BIN    = tools/compile
+TEST_SORT_BIN = tests/test_network
+TEST_COMPAT_BIN = tests/test_channel
 SORTER    = sorter.txt
 
 .PHONY: all clean sorter check test help tools tests
@@ -26,7 +26,7 @@ tools: $(MKLDR1_BIN) $(C3_BIN)
 
 tests: $(TEST_SORT_BIN) $(TEST_COMPAT_BIN)
 
-$(VM1_BIN): $(VM1_SRC) $(SRC_DIR)/vm1.h $(SRC_DIR)/loader.inc
+$(VM1_BIN): $(VM1_SRC) $(SRC_DIR)/machine.h $(SRC_DIR)/loader.h
 	$(CC) $(CFLAGS) $(VM1_SRC) -o $@
 
 $(SORT_BIN): $(SORT_SRC)
@@ -67,7 +67,7 @@ clean:
 help:
 	@echo "Targets:"
 	@echo "  all     - build vm1, sort and tools"
-	@echo "  tools   - build mkldr1 and copy3_to_vm1"
+	@echo "  tools   - build loader and compile"
 	@echo "  tests   - build C test binaries"
 	@echo "  sorter  - generate sorter.txt for SPACE_SIZE=$(SPACE_SIZE)"
 	@echo "  check   - run C tests"

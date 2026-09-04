@@ -19,12 +19,12 @@
 // ---------- helpers ----------
 
 static void die(const char *msg) {
-    fprintf(stderr, "mkldr1: %s\n", msg);
+    fprintf(stderr, "loader: %s\n", msg);
     exit(1);
 }
 
 static void die2(const char *msg, const char *arg) {
-    fprintf(stderr, "mkldr1: %s: %s\n", msg, arg);
+    fprintf(stderr, "loader: %s: %s\n", msg, arg);
     exit(1);
 }
 
@@ -77,12 +77,12 @@ static uint16_t *parse_vm1_file(const char *path, size_t *out_len) {
             t = strtok(NULL, " \t");
         }
         if (t) {
-            fprintf(stderr, "mkldr1: %s:%d: expected 4 ints, got >4\n",
+            fprintf(stderr, "loader: %s:%d: expected 4 ints, got >4\n",
                     path, lineno);
             exit(1);
         }
         if (ntok != 4) {
-            fprintf(stderr, "mkldr1: %s:%d: expected 4 ints, got %d\n",
+            fprintf(stderr, "loader: %s:%d: expected 4 ints, got %d\n",
                     path, lineno, ntok);
             exit(1);
         }
@@ -163,7 +163,7 @@ int main(int argc, char **argv) {
     // simple arg parser with guard
     if (argc < 5) {
         fprintf(stderr,
-                "usage: mkldr1 --in-prog FILE --out FILE "
+                "usage: loader --in-prog FILE --out FILE "
                 "[--dst-word-base N] [--tail-bytes FILE]\n");
         return 2;
     }

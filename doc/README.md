@@ -13,13 +13,13 @@ Current demo: `SPACE_SIZE=65520`, 1 bit per position, `INDEX_SIZE=16`.
 
 ## Layout
 
-- `src/vm1.c` — two-phase addressing emulator
-- `src/vm1.h` — `machine`/`subspace`/`network`, `SPACE_SIZE`/`LIFE`/`CHANNEL_IN/OUT`
-- `src/loader.inc` — built-in loader `[dst_low,dst_high,src_low,src_high]`
-- `src/sort.c` — pairwise generator (stable)
-- `tools/mkldr1` — pack `.vm1` → `LDR1` (`LDR1 + u16 count/base + payload`)
-- `tools/copy3_to_vm1` — `n dst src` → `4` vm1 words
-- `examples/` — `echo.copy3`, `sort256_runtime.vm1`
+- `src/machine.c` — two-phase addressing emulator
+- `src/machine.h` — `machine`/`subspace`/`network`, `SPACE_SIZE`/`LIFE`/`CHANNEL_IN/OUT`
+- `src/loader.h` — built-in loader `[dst_low,dst_high,src_low,src_high]`
+- `src/network.c` — pairwise generator (stable)
+- `tools/loader` — pack `.vm1` → `LDR1` (`LDR1 + u16 count/base + payload`)
+- `tools/compile` — `n dst src` → `4` vm1 words
+- `examples/` — `echo.asm`, `sort256_runtime.vm1`
 - `sorter.txt` — generated network (not committed)
 - `tests/` — C checks
 
@@ -30,11 +30,11 @@ make all                 # vm1, sort, tools
 make sorter              # ./sort 65520 > sorter.txt
 ./vm1 sorter.txt < in.bin > out.bin
 # LDR1 load: 4b magic "LDR1" + u16 count + u16 base + u16 words + tail bytes -> CHANNEL_IN
-./tools/copy3_to_vm1 --in-copy3 examples/echo.copy3 --out-vm1 /tmp/e.vm1
-./tools/mkldr1 --in-prog /tmp/e.vm1 --out /tmp/p.ldrpkt --dst-word-base 0
+./tools/compile --in-copy3 examples/echo.asm --out-vm1 /tmp/e.vm1
+./tools/loader --in-prog /tmp/e.vm1 --out /tmp/p.ldrpkt --dst-word-base 0
 cat /tmp/p.ldrpkt in.bin | ./vm1 sorter.txt > out.bin
 ```
-`sort` guarantees `a,b < SPACE_SIZE`. `LIFE` (in `vm1.h`) bounds cycles.
+`sort` guarantees `a,b < SPACE_SIZE`. `LIFE` (in `machine.h`) bounds cycles.
 
 ## Two-phase addressing
 
@@ -61,7 +61,7 @@ while (life-- && !channel_read(vm1)) {
 ## Init & limits
 
 1. load `sorter.txt` → `fabric.layers` (split by reused index), 2. set `origin=i`.
-3. write built-in loader (`src/loader.inc`, 8 bytes / 4 `idx` words) to `space[0]` if it fits.
+3. write built-in loader (`src/loader.h`, 8 bytes / 4 `idx` words) to `space[0]` if it fits.
 `CHANNEL_IN = SPACE_SIZE/8 -1`, `CHANNEL_OUT = -2` (last two bytes). EOF ends loop.
 
 ## Sorting network (pairwise, stable)
@@ -86,4 +86,4 @@ See `doc/hardware.md` for transistor/RTL estimates.
 - **stage/cycle** — phase / full `stage1+stage2`
 - **processor area** — interval instructions in `space`, **channel** — `CHANNEL_IN/OUT` bytes
 
-License: MIT — see `src/vm1.h`.
+License: MIT — see `src/machine.h`.

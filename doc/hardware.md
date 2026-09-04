@@ -1,6 +1,6 @@
 # Hardware notes — VM1 positional addressing
 
-Behavioral spec: `src/vm1.c` (2-phase, stable pairwise network). Not intended for direct C→HDL.
+Behavioral spec: `src/machine.c` (2-phase, stable pairwise network). Not intended for direct C→HDL.
 
 ## Cost estimate (current vm1, 65,520 positions, 16-bit index)
 

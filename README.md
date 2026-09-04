@@ -5,7 +5,7 @@ Positional addressing without arithmetic. Intervals are addressed by position, n
 - **Problem:** copy `n` bits from `src` to `dst` in parallel for many intervals at once.
 - **Key:** interval `(low,high)` (open) → `partner` (paired interval), `sort`/`origin`; hardware uses only `>` compare.
 - **Mechanism:** two phases over the network: `stage1` marks intervals (`key.sort=partner`), `stage2` transposes and moves `value` by `role`.
-- **Network:** pairwise (stable) from `src/sort.c`, 65,520 positions, 136 layers.
+- **Network:** pairwise (stable) from `src/network.c`, 65,520 positions, 136 layers.
 
 This repo is the *addressing* demo. The address space itself is a separate project.
 
@@ -16,18 +16,18 @@ make all          # vm1 + sort + tools
 make sorter       # ./sort 65520 > sorter.txt
 ./vm1 sorter.txt < input.bin > output.bin
 # with program load (LDR1)
-./tools/copy3_to_vm1 --in-copy3 examples/echo.copy3 --out-vm1 /tmp/echo.vm1
-./tools/mkldr1 --in-prog /tmp/echo.vm1 --out /tmp/prog.ldrpkt
+./tools/compile --in-copy3 examples/echo.asm --out-vm1 /tmp/echo.vm1
+./tools/loader --in-prog /tmp/echo.vm1 --out /tmp/prog.ldrpkt
 cat /tmp/prog.ldrpkt input.bin | ./vm1 sorter.txt > out.bin
 make check        # C tests: sort256 + compat
 ```
 
 ## Layout
 
-- `src/` — `vm1.c/.h` (2-phase addressing), `sort.c`, `loader.inc`
-- `tools/` — `mkldr1`, `copy3_to_vm1` (C)
-- `examples/` — `echo.copy3`, `sort256_runtime.vm1`
-- `tests/` — `test_sort256`, `test_compat` (C)
+- `src/` — `machine.c/.h` (2-phase addressing), `network.c`, `loader.h`
+- `tools/` — `loader`, `compile` (C)
+- `examples/` — `echo.asm`, `sort256_runtime.vm1`
+- `tests/` — `test_network`, `test_channel` (C)
 - `doc/` — `README.md` (addressing details), `hardware.md` (cost/RTL)
 
 See `doc/README.md` for the addressing cycle and `doc/hardware.md` for transistor estimates.

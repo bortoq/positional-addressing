@@ -36,12 +36,27 @@ static uint32_t next_pow2(uint32_t n){
 }
 
 /* seq helpers */
-static void seq_add(seq_t *s, uint32_t a, uint32_t b){
-    if(a==b) return;
-    if(s->count>=s->cap){ size_t cap=s->cap?s->cap*2:64; pair_t *p=realloc(s->pair, cap*sizeof *p); if(!p) die("alloc seq"); s->pair=p; s->cap=cap; }
-    s->pair[s->count++]=(pair_t){a,b};
+static void seq_add(seq_t *s, uint32_t a, uint32_t b)
+{
+    if(a == b) return;
+    if(s->count >= s->cap)
+      {
+        size_t cap = s->cap ? 2 * s->cap : 64;
+        pair_t *p = realloc(s->pair, cap * sizeof *p); 
+        if(!p) 
+          die("alloc seq"); 
+        s->pair = p;
+        s->cap = cap; 
+      }
+    s->pair[s->count++] = (pair_t){a, b};
 }
-static void seq_free(seq_t *s){ free(s->pair); s->pair=NULL; s->count=s->cap=0; }
+
+static void seq_free(seq_t *s)
+{ 
+  free(s->pair); 
+  s->pair = NULL;
+  s->count = s->cap = 0;
+}
 
 /* net helpers */
 static void net_reserve(net_t *net, size_t need){

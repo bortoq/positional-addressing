@@ -4,10 +4,10 @@ sorter.txt
 # build artifacts
 vm1
 sort
-tools/mkldr1
-tools/copy3_to_vm1
-tests/test_sort256
-tests/test_compat
+tools/loader
+tools/compile
+tests/test_network
+tests/test_channel
 *.o
 *.out
 *.bin
