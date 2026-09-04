@@ -1,7 +1,11 @@
 /*
- * PARALLEL ADDRESS SPACE DEFINITIONS
+ * vm1 — positional addressing definitions
  *
- * 2025-02-05, dmitri bortoq (bortoq@gmail.com), mit license
+ * Demo 2: 2-phase addressing via stable pairwise sorting network.
+ * Interval = open (low,high) -> bits [low+1, high-1] copied.
+ * Only operation on keys is '>' compare.
+ *
+ * 2025-02-05, dmitri bortoq (bortoq@gmail.com), MIT license
  */
 #ifndef VM1_H_
 #define VM1_H_
@@ -12,103 +16,96 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* Purpose: number of channel ends in one copy instruction (dst and src). */
+/* --- configuration --- */
+
+// how many channel ends per instruction (dst + src)
 #define EDGES 2
-/* Purpose: number of interval directions in one instruction edge. */
+// directions per edge (low/high)
 #define WAYS 2
+
 #ifndef SPACE_SIZE
-/* Purpose: number of positions in address space. */
-#define SPACE_SIZE 0xfff0
+#define SPACE_SIZE 0xfff0        // number of bit positions (65,520)
 #endif
 #ifndef PROCESSOR_N
-/* Purpose: number of instruction slots in processor area. */
-#define PROCESSOR_N 128
+#define PROCESSOR_N 128          // instruction slots in processor area
 #endif
 #ifndef LIFE
-/* Purpose: upper bound of compute cycles in one run. */
-#define LIFE 0x10
+#define LIFE 0x10                // max compute cycles per run
 #endif
-/* Purpose: index width estimate for current address-space size. */
-#define INDEX_SIZE LOG2(SPACE_SIZE)
-/* Purpose: theoretical upper bound for sorting-network layer count. */
-#define LAYER_N (LOG2(SPACE_SIZE) * (LOG2(SPACE_SIZE) + 1) / 2)
-/* Purpose: byte offset of input channel in packed address space. */
-#define CHANNEL_IN  (SPACE_SIZE / CHAR_BIT - 1)
-/* Purpose: byte offset of output channel in packed address space. */
+
+/* --- derived --- */
+
+// ceil(log2(n)) for n>0 — used for INDEX_SIZE / LAYER_N estimates
+#if defined(_MSC_VER)
+  #define LOG2(N) (int)(sizeof(N) * CHAR_BIT - __builtin_clz((unsigned)(N)))
+#elif defined(__GNUC__) || defined(__GNUG__)
+  #define LOG2(N) (int)(sizeof(N) * CHAR_BIT - __builtin_clz((unsigned)(N)))
+#else
+  #define LOG2(N) (32 - __builtin_clz((unsigned)(N)))
+#endif
+
+#define INDEX_SIZE LOG2(SPACE_SIZE)                          // bits per index
+#define LAYER_N    (LOG2(SPACE_SIZE) * (LOG2(SPACE_SIZE)+1)/2) // max layers
+
+#define CHANNEL_IN  (SPACE_SIZE / CHAR_BIT - 1)              // byte offset
 #define CHANNEL_OUT (SPACE_SIZE / CHAR_BIT - 2)
-/* Purpose: lower bit index of input channel interval. */
-#define CHANNEL_IN_LO  (CHANNEL_IN * CHAR_BIT)
-/* Purpose: upper bit index of input channel interval. */
-#define CHANNEL_IN_HI  (CHANNEL_IN_LO + CHAR_BIT)
-/* Purpose: lower bit index of output channel interval. */
+
+#define CHANNEL_IN_LO  (CHANNEL_IN  * CHAR_BIT)
+#define CHANNEL_IN_HI  (CHANNEL_IN_LO  + CHAR_BIT)
 #define CHANNEL_OUT_LO (CHANNEL_OUT * CHAR_BIT)
-/* Purpose: upper bit index of output channel interval. */
 #define CHANNEL_OUT_HI (CHANNEL_OUT_LO + CHAR_BIT)
-/* Purpose: command-line usage string for vm1 executable. */
+
 #define HELP "command line:\nvm1 [sorter.txt] [</dev/stdin >/dev/stdout]"
 
-/* Purpose: compute ceil(log2(n + 1)) for positive integer n. */
-#if defined(_MSC_VER)
-  #define LOG2(N) (sizeof(N) * CHAR_BIT - _BitScanReverse64(N))
-#elif defined(__GNUC__) || defined(__GNUG__)
-  #define LOG2(N) (sizeof(N) * CHAR_BIT - __builtin_clz(N))
-#endif
-/* Purpose: get compile-time element count of static array. */
+/* --- helpers --- */
+
 #define ARR_SZ(A) (sizeof(A) / sizeof *(A))
-/* Purpose: read one bit from integer source by bit offset. */
-#define GETBIT(SRC, OFFSET) (1u & ((SRC) >> (OFFSET)))
-/* Purpose: write one bit into integer destination by bit offset. */
-#define SETBIT(DST, OFFSET, SRC) DST ^= (-(SRC) ^ (DST)) & (1u << (OFFSET))
-/* Purpose: fail fast on fatal condition with message and source line. */
-#define E(C, M) if(C) {fprintf(stderr, M); exit(__LINE__);}
+#define GETBIT(SRC, OFF) (1u & ((SRC) >> (OFF)))
+// branchless bit set: DST[OFF] = SRC (0/1)
+#define SETBIT(DST, OFF, SRC) \
+    DST ^= (-(int)(SRC) ^ (DST)) & (1u << (OFF))
 
-/* Purpose: single-bit storage type in emulator state. */
-typedef uint8_t   bit;
-/* Purpose: data-bit type in address space. */
-typedef bit       data;
-/* Purpose: address-space index type. */
-typedef uint16_t  idx;
+// fail fast with file:line
+#define E(COND, MSG) do { \
+    if (COND) { fprintf(stderr, "%s:%d: %s\n", __FILE__, __LINE__, MSG); exit(1); } \
+} while (0)
 
-/* Purpose: one comparator pair in sorting network layer. */
-typedef struct {
-  idx a;
-  idx b;
-} pair;
+/* --- types --- */
 
-/* Purpose: one sorting-network layer with many comparator pairs. */
-typedef struct {
-  pair  *pairs;
-  size_t count;
-  size_t cap;
+typedef uint8_t  bit;   // 0/1
+typedef bit      data;  // bit in space
+typedef uint16_t idx;   // position index (fits SPACE_SIZE)
+
+typedef struct { idx a, b; } pair;          // one comparator
+
+typedef struct {                            // one layer (parallel)
+    pair  *pairs;
+    size_t count, cap;
 } layer;
 
-/* Purpose: full sorting network as ordered array of layers. */
-typedef struct {
-  layer  *layers;
-  size_t count;
-  size_t cap;
+typedef struct {                            // full network
+    layer  *layers;
+    size_t count, cap;
 } network;
 
-/* Purpose: lexicographic addressing key of one address-space position. */
+// addressing key per position — see doc/README.md
 typedef struct {
-  idx low;                 /* Purpose: lower bound of current interval marker. */
-  idx high;                /* Purpose: upper bound of current interval marker. */
-  idx partner;             /* Purpose: lower bound of paired interval marker. */
-  idx sort;                /* Purpose: temporary sort key for network compare. */
-  idx origin;              /* Purpose: invariant origin index of this position. */
+    idx low;      // interval low (excluded)
+    idx high;     // interval high (excluded)
+    idx partner;  // paired interval low
+    idx sort;     // current sort key
+    idx origin;   // fixed position id
 } position_key;
 
-/* Purpose: complete vm1 machine state: address space, subspace, and network. */
 typedef struct {
-  /* Purpose: packed bit array of full address space. */
-  data space[SPACE_SIZE / CHAR_BIT];
-  struct {
-    data value;             /* Purpose: current data bit for this position. */
-    bit  active;            /* Purpose: participation flag in current stage. */
-    bit  role;              /* Purpose: copy role, source or destination side. */
-    position_key key;       /* Purpose: lexicographic key fields for position. */
-  } subspace[SPACE_SIZE];
-  network fabric;           /* Purpose: loaded sorting network links by layers. */
+    data space[SPACE_SIZE / CHAR_BIT];      // packed bits
+    struct {
+        data value;
+        bit  active;   // participates this phase?
+        bit  role;     // 0=dst side, 1=src side (owns value)
+        position_key key;
+    } subspace[SPACE_SIZE];
+    network fabric;                         // sorting network
 } machine;
 
-#endif /* VM1_H_ */
+#endif // VM1_H_
