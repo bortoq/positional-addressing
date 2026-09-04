@@ -27,3 +27,7 @@ venv/
 .idea/
 *~
 .DS_Store
+
+# archived large sorter from v0 (generated)
+v0/sorter_v0.txt
+v0/sort

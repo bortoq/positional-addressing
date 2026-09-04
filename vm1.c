@@ -5,8 +5,7 @@
  * 2024-11-02, dmitri bortoq (bortoq@gmail.com), mit license
  */
 #include "vm1.h"
-
-static const uint64_t loader = 0x3fc01fff2000003f; /* src_high src_low dst_high dst_low */
+#include "loader.inc"
 
 /* Purpose: detect repeated position index in the current network layer. */
 static int last(idx i)
@@ -155,12 +154,76 @@ static int channel_write(machine *vm1)
   return fwrite(&vm1->space[CHANNEL_OUT], 1, 1, stdout) == 1 ? 0 : -1;
 }
 
+/* Read one byte from stdin stream used by channel protocol. */
+static int stream_read_u8(uint8_t *out)
+{
+  int c = fgetc(stdin);
+  if(c == EOF)
+    return -1;
+  *out = (uint8_t)c;
+  return 0;
+}
+
+/* Read one 16-bit little-endian value from stdin stream. */
+static int stream_read_u16le(uint16_t *out)
+{
+  uint8_t lo, hi;
+  if(stream_read_u8(&lo) != 0 || stream_read_u8(&hi) != 0)
+    return -1;
+  *out = (uint16_t)lo | (uint16_t)((uint16_t)hi << 8);
+  return 0;
+}
+
 /* Purpose: read one machine word from packed address space bytes. */
 static idx read_word(const machine *vm1, idx word)
 {
   idx value;
   memcpy(&value, vm1->space + word * sizeof value, sizeof value);
   return value;
+}
+
+/* Purpose: write one machine word into packed address space bytes. */
+static void write_word(machine *vm1, idx word, idx value)
+{
+  memcpy(vm1->space + word * sizeof value, &value, sizeof value);
+}
+
+/* Optional external loader protocol from stdin:
+ *   magic: 'L' 'D' 'R' '1'
+ *   u16le word_count
+ *   u16le dst_word_base
+ *   payload: word_count * u16le words
+ * If magic is absent, stdin is rewound when possible and normal channel mode continues.
+ */
+static void maybe_load_program_from_stdin(machine *vm1)
+{
+  uint8_t m[4];
+  long pos = ftell(stdin);
+  if(stream_read_u8(&m[0]) != 0 || stream_read_u8(&m[1]) != 0
+     || stream_read_u8(&m[2]) != 0 || stream_read_u8(&m[3]) != 0)
+    return;
+
+  if(!(m[0] == 'L' && m[1] == 'D' && m[2] == 'R' && m[3] == '1'))
+  {
+    if(pos >= 0)
+      (void)fseek(stdin, pos, SEEK_SET);
+    return;
+  }
+
+  uint16_t words = 0, base = 0;
+  E(stream_read_u16le(&words) != 0, "loader protocol: missing word_count");
+  E(stream_read_u16le(&base) != 0, "loader protocol: missing dst_word_base");
+
+  idx words_cap = (idx)(sizeof vm1->space / sizeof(idx));
+  E((idx)base >= words_cap, "loader protocol: dst base out of range");
+  E((idx)words > (idx)(words_cap - (idx)base), "loader protocol: payload out of range");
+
+  for(idx i = 0; i < (idx)words; ++i)
+  {
+    uint16_t w = 0;
+    E(stream_read_u16le(&w) != 0, "loader protocol: truncated payload");
+    write_word(vm1, (idx)(base + i), (idx)w);
+  }
 }
 
 /* Purpose: validate command-line arguments for vm1 run mode. */
@@ -179,10 +242,11 @@ static void init_origin_keys(machine *vm1)
 /* Purpose: copy built-in loader instruction into processor area start. */
 static void install_loader(machine *vm1)
 {
-#define INSTR_BYTES (EDGES * WAYS * sizeof(idx))
-  if(INSTR_BYTES <= sizeof vm1->space)
-    memmove(vm1->space, &loader, INSTR_BYTES);
-#undef INSTR_BYTES
+  idx words_cap = (idx)(sizeof vm1->space / sizeof(idx));
+  idx loader_n = (idx)ARR_SZ(loader_words);
+  if(loader_n <= words_cap)
+    for(idx i = 0; i < loader_n; ++i)
+      write_word(vm1, i, loader_words[i]);
 }
 
 /* Purpose: allocate and initialize full machine state from input sorter file. */
@@ -430,6 +494,8 @@ static void run_channels(machine *vm1,
                          void (**stage_pair)(machine*, idx, idx),
                          idx n)
 {
+  maybe_load_program_from_stdin(vm1);
+
   uint64_t life = LIFE;
   while(life-- && channel_read(vm1) == 0)
   {

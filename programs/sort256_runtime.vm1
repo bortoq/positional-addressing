@@ -1,0 +1,17 @@
+# vm1 runtime program template for 256-byte sort + check.
+# Format per line:
+#   dst_low dst_high src_low src_high
+#
+# Contract:
+# - Program is loaded via LDR1 into processor area.
+# - Runtime input array (256 bytes) arrives via CHANNEL_IN.
+# - Program must emit diagnostics to CHANNEL_OUT:
+#     "256 elements sorted.\nOK\n"
+#   or
+#     "256 elements sorted.\nFAILED\n"
+#
+# NOTE:
+# This file is a scaffold for incremental build of the runtime program.
+# Keep first instruction as a no-op sentinel (empty copy).
+0 0 0 0
+
