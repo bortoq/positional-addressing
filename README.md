@@ -44,7 +44,6 @@ The active version implements two-phase addressing:
 - `sort2.c` — sorting network generator (odd-even mergesort). Builds network for the next power of two and prints only pairs inside the working set
 - `sorter.txt` — generated text network for current `SPACE_SIZE` (not committed, run `make sorter`)
 - `tests/` — integration checks for sorting network and channel copy
-- `v0/` — snapshot of previous version (archived)
 - `Makefile` — build, sorter generation, tests
 - `README.md` — this file
 
