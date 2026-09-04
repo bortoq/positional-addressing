@@ -3,7 +3,7 @@ sorter.txt
 
 # build artifacts
 vm1
-sort2
+sort
 tools/mkldr1
 tools/copy3_to_vm1
 tests/test_sort256

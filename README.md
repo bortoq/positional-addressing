@@ -5,15 +5,15 @@ Positional addressing without arithmetic. Intervals are addressed by position, n
 - **Problem:** copy `n` bits from `src` to `dst` in parallel for many intervals at once.
 - **Key:** interval `(low,high)` (open) → `partner` (paired interval), `sort`/`origin`; hardware uses only `>` compare.
 - **Mechanism:** two phases over the network: `stage1` marks intervals (`key.sort=partner`), `stage2` transposes and moves `value` by `role`.
-- **Network:** pairwise (stable) from `src/sort2.c`, 65,520 positions, 136 layers.
+- **Network:** pairwise (stable) from `src/sort.c`, 65,520 positions, 136 layers.
 
 This repo is the *addressing* demo. The address space itself is a separate project.
 
 ## Quick start
 
 ```sh
-make all          # vm1 + sort2 + tools
-make sorter       # ./sort2 65520 > sorter.txt
+make all          # vm1 + sort + tools
+make sorter       # ./sort 65520 > sorter.txt
 ./vm1 sorter.txt < input.bin > output.bin
 # with program load (LDR1)
 ./tools/copy3_to_vm1 --in-copy3 examples/echo.copy3 --out-vm1 /tmp/echo.vm1
@@ -24,7 +24,7 @@ make check        # C tests: sort256 + compat
 
 ## Layout
 
-- `src/` — `vm1.c/.h` (2-phase addressing), `sort2.c`, `loader.inc`
+- `src/` — `vm1.c/.h` (2-phase addressing), `sort.c`, `loader.inc`
 - `tools/` — `mkldr1`, `copy3_to_vm1` (C)
 - `examples/` — `echo.copy3`, `sort256_runtime.vm1`
 - `tests/` — `test_sort256`, `test_compat` (C)

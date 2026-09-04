@@ -1,4 +1,4 @@
-/* test_compat - vm1 channel copy compat via LDR1 (C port, sort2-based, non-gating) */
+/* test_compat - vm1 channel copy compat via LDR1 (C port, sort-based, non-gating) */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -111,9 +111,9 @@ int main(void){
             }
         }
     }
-    printf("=== sorter compatibility summary ===\n sort2: pass=%d fail=%d\n",passed,failed);
+    printf("=== sorter compatibility summary ===\n sort: pass=%d fail=%d\n",passed,failed);
     if(failed){
-        fprintf(stderr,"NOTE: sort2 is pairwise stable; compat should pass (12/12)\n");
+        fprintf(stderr,"NOTE: sort is pairwise stable; compat should pass (12/12)\n");
         return 0; // non-gating
     }
     return 0;

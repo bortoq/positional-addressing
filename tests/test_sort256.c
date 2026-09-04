@@ -1,4 +1,4 @@
-/* test_sort256 - validate 256-element sorting with sort2 network (C port) */
+/* test_sort256 - validate 256-element sorting with sort network (C port) */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

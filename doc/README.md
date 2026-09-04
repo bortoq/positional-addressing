@@ -16,7 +16,7 @@ Current demo: `SPACE_SIZE=65520`, 1 bit per position, `INDEX_SIZE=16`.
 - `src/vm1.c` — two-phase addressing emulator
 - `src/vm1.h` — `machine`/`subspace`/`network`, `SPACE_SIZE`/`LIFE`/`CHANNEL_IN/OUT`
 - `src/loader.inc` — built-in loader `[dst_low,dst_high,src_low,src_high]`
-- `src/sort2.c` — pairwise generator (stable)
+- `src/sort.c` — pairwise generator (stable)
 - `tools/mkldr1` — pack `.vm1` → `LDR1` (`LDR1 + u16 count/base + payload`)
 - `tools/copy3_to_vm1` — `n dst src` → `4` vm1 words
 - `examples/` — `echo.copy3`, `sort256_runtime.vm1`
@@ -26,15 +26,15 @@ Current demo: `SPACE_SIZE=65520`, 1 bit per position, `INDEX_SIZE=16`.
 ## Build & run
 
 ```sh
-make all                 # vm1, sort2, tools
-make sorter              # ./sort2 65520 > sorter.txt
+make all                 # vm1, sort, tools
+make sorter              # ./sort 65520 > sorter.txt
 ./vm1 sorter.txt < in.bin > out.bin
 # LDR1 load: 4b magic "LDR1" + u16 count + u16 base + u16 words + tail bytes -> CHANNEL_IN
 ./tools/copy3_to_vm1 --in-copy3 examples/echo.copy3 --out-vm1 /tmp/e.vm1
 ./tools/mkldr1 --in-prog /tmp/e.vm1 --out /tmp/p.ldrpkt --dst-word-base 0
 cat /tmp/p.ldrpkt in.bin | ./vm1 sorter.txt > out.bin
 ```
-`sort2` guarantees `a,b < SPACE_SIZE`. `LIFE` (in `vm1.h`) bounds cycles.
+`sort` guarantees `a,b < SPACE_SIZE`. `LIFE` (in `vm1.h`) bounds cycles.
 
 ## Two-phase addressing
 
@@ -66,7 +66,7 @@ while (life-- && !channel_read(vm1)) {
 
 ## Sorting network (pairwise, stable)
 
-Pairwise is stable — equal keys keep order — so two phases are enough (no third reordering). `sort2`:
+Pairwise is stable — equal keys keep order — so two phases are enough (no third reordering). `sort`:
 1. next pow2 `>= SPACE_SIZE`, 2. build full pairwise network for that size, 3. if needed filter `a,b < SPACE_SIZE` and repack by wire readiness.
 Text `sorter.txt`: `a b` per line, blank line between layers. Current pairwise 65,520: ~3,997,174 lines (≈136 layers, ≤32,760/layer), filtered from 65,536 and repacked greedily.
 

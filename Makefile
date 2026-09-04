@@ -4,14 +4,14 @@ SPACE_SIZE ?= 65520
 
 SRC_DIR   = src
 VM1_SRC   = $(SRC_DIR)/vm1.c
-SORT2_SRC = $(SRC_DIR)/sort2.c
+SORT_SRC = $(SRC_DIR)/sort.c
 MKLDR1_SRC = tools/mkldr1.c
 C3_SRC    = tools/copy3_to_vm1.c
 TEST_SORT_SRC = tests/test_sort256.c
 TEST_COMPAT_SRC = tests/test_compat.c
 
 VM1_BIN   = vm1
-SORT2_BIN = sort2
+SORT_BIN = sort
 MKLDR1_BIN = tools/mkldr1
 C3_BIN    = tools/copy3_to_vm1
 TEST_SORT_BIN = tests/test_sort256
@@ -20,7 +20,7 @@ SORTER    = sorter.txt
 
 .PHONY: all clean sorter check test help tools tests
 
-all: $(VM1_BIN) $(SORT2_BIN) tools
+all: $(VM1_BIN) $(SORT_BIN) tools
 
 tools: $(MKLDR1_BIN) $(C3_BIN)
 
@@ -29,8 +29,8 @@ tests: $(TEST_SORT_BIN) $(TEST_COMPAT_BIN)
 $(VM1_BIN): $(VM1_SRC) $(SRC_DIR)/vm1.h $(SRC_DIR)/loader.inc
 	$(CC) $(CFLAGS) $(VM1_SRC) -o $@
 
-$(SORT2_BIN): $(SORT2_SRC)
-	$(CC) $(CFLAGS) $(SORT2_SRC) -o $@
+$(SORT_BIN): $(SORT_SRC)
+	$(CC) $(CFLAGS) $(SORT_SRC) -o $@
 
 $(MKLDR1_BIN): $(MKLDR1_SRC)
 	$(CC) $(CFLAGS) $(MKLDR1_SRC) -o $@
@@ -47,26 +47,26 @@ $(TEST_COMPAT_BIN): $(TEST_COMPAT_SRC)
 # Generate default sorting network
 sorter: $(SORTER)
 
-$(SORTER): $(SORT2_BIN)
-	./$(SORT2_BIN) $(SPACE_SIZE) > $@
+$(SORTER): $(SORT_BIN)
+	./$(SORT_BIN) $(SPACE_SIZE) > $@
 
 # Run all project tests (C only, no python)
 check: all $(SORTER) tests
-	@echo "== sort2: 256-pair sanity =="
+	@echo "== sort: 256-pair sanity =="
 	./$(TEST_SORT_BIN)
 	@echo "== vm1 channel compat (pairwise stable, 2-phase) =="
-	@./$(TEST_COMPAT_BIN) || echo "(compat: sort2 not fully vm1-compatible)"
+	@./$(TEST_COMPAT_BIN) || echo "(compat: sort not fully vm1-compatible)"
 
 test: check
 
 clean:
-	rm -f $(VM1_BIN) $(SORT2_BIN) $(SORTER) $(MKLDR1_BIN) $(C3_BIN) $(TEST_SORT_BIN) $(TEST_COMPAT_BIN)
+	rm -f $(VM1_BIN) $(SORT_BIN) $(SORTER) $(MKLDR1_BIN) $(C3_BIN) $(TEST_SORT_BIN) $(TEST_COMPAT_BIN)
 	rm -f tmp_* tmp-*
 
 
 help:
 	@echo "Targets:"
-	@echo "  all     - build vm1, sort2 and tools"
+	@echo "  all     - build vm1, sort and tools"
 	@echo "  tools   - build mkldr1 and copy3_to_vm1"
 	@echo "  tests   - build C test binaries"
 	@echo "  sorter  - generate sorter.txt for SPACE_SIZE=$(SPACE_SIZE)"

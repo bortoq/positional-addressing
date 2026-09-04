@@ -111,7 +111,7 @@ static net_t seq_pack(const seq_t *seq, uint32_t wires){
 
 int main(int argc, char **argv){
     uint32_t space_size=65520;
-    if(argc>2){ fputs("usage: sort2 [space_size]\n", stderr); return EXIT_FAILURE; }
+    if(argc>2){ fputs("usage: sort [space_size]\n", stderr); return EXIT_FAILURE; }
     if(argc==2) space_size=parse_u32(argv[1]);
     if(space_size<2) die("space_size must be >=2");
     if(space_size>65536) die("space_size max 65536");
