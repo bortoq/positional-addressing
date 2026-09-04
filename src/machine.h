@@ -65,15 +65,15 @@
 #define SETBIT(DST, OFF, SRC) DST ^= (-(int)(SRC) ^ (DST)) & (1u << (OFF))
 
 // fail fast with file:line
-#define E(COND, MSG)                                           \
-  do                                                           \
-  {                                                            \
-    if(COND)                                                   \
-    {                                                          \
-      fprintf(stderr, "%s:%d: %s\n", __FILE__, __LINE__, MSG); \
-      exit(1);                                                 \
-    }                                                          \
-  } while(0)
+#define E(COND, MSG)                                                 \
+    do                                                               \
+    {                                                                \
+        if(COND)                                                     \
+        {                                                            \
+            fprintf(stderr, "%s:%d: %s\n", __FILE__, __LINE__, MSG); \
+            exit(1);                                                 \
+        }                                                            \
+    } while(0)
 
 /* --- types --- */
 
@@ -83,42 +83,42 @@ typedef uint16_t idx;  // position index (fits SPACE_SIZE)
 
 typedef struct
 {
-  idx a, b;
+    idx a, b;
 } pair;  // one comparator
 
 typedef struct
 {  // one layer (parallel)
-  pair* pairs;
-  size_t count, cap;
+    pair* pairs;
+    size_t count, cap;
 } layer;
 
 typedef struct
 {  // full network
-  layer* layers;
-  size_t count, cap;
+    layer* layers;
+    size_t count, cap;
 } network;
 
 // addressing key per position — see doc/README.md
 typedef struct
 {
-  idx low;      // interval low (excluded)
-  idx high;     // interval high (excluded)
-  idx partner;  // paired interval low
-  idx sort;     // current sort key
-  idx origin;   // fixed position id
+    idx low;      // interval low (excluded)
+    idx high;     // interval high (excluded)
+    idx partner;  // paired interval low
+    idx sort;     // current sort key
+    idx origin;   // fixed position id
 } position_key;
 
 typedef struct
 {
-  data space[SPACE_SIZE / CHAR_BIT];  // packed bits
-  struct
-  {
-    data value;
-    bit active;  // participates this phase?
-    bit role;    // 0=dst side, 1=src side (owns value)
-    position_key key;
-  } subspace[SPACE_SIZE];
-  network fabric;  // sorting network
+    data space[SPACE_SIZE / CHAR_BIT];  // packed bits
+    struct
+    {
+        data value;
+        bit active;  // participates this phase?
+        bit role;    // 0=dst side, 1=src side (owns value)
+        position_key key;
+    } subspace[SPACE_SIZE];
+    network fabric;  // sorting network
 } machine;
 
 #endif  // VM1_H_

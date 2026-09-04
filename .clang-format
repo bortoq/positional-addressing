@@ -5,7 +5,7 @@ BraceWrapping:
   AfterFunction: true
   AfterControlStatement: Always
   BeforeElse: true
-IndentWidth: 2
+IndentWidth: 4
 ColumnLimit: 88
 UseTab: Never
 SpaceBeforeParens: Never
@@ -13,9 +13,10 @@ SpacesInParentheses: false
 SpaceAfterCStyleCast: false
 SpaceBeforeAssignmentOperators: true
 SpaceBeforeSquareBrackets: false
-AllowShortIfStatementsOnASingleLine: false
+AllowShortIfStatementsOnASingleLine: true
 AllowShortFunctionsOnASingleLine: None
 KeepEmptyLinesAtTheStartOfBlocks: false
 MaxEmptyLinesToKeep: 1
 AlignConsecutiveAssignments: false
 AlignConsecutiveDeclarations: false
+ContinuationIndentWidth: 6
