@@ -36,9 +36,8 @@ The active version implements two-phase addressing:
 - `src/vm1.c` — emulator for the address space and two-phase addressing
 - `src/vm1.h` — definitions for `machine`, `subspace`, `network` fabric and vm1 constants
 - `src/loader.inc` — built-in loader word table in explicit vm1 format `[dst_low, dst_high, src_low, src_high]`
-- `tools/mkldr1.py` — external packer for vm1 programs into LDR1 binary stream
-- `tools/copy3_to_vm1.py` — compiler from `copy3` (`n dst src`) to vm1 words
-- `tools/gen_pairwise_sorter.py` — wrapper for alternative pairwise generator (optional, needs external `gen_network`)
+- `tools/mkldr1` — packer (C) for vm1 programs into LDR1 binary stream
+- `tools/copy3_to_vm1` — compiler (C) from `copy3` (`n dst src`) to vm1 words
 - `programs/sort256_runtime.vm1` — template runtime program for sorting 256 bytes
 - `programs/echo.copy3` — simple echo example (`8 65504 65512`)
 - `src/sort2.c` — sorting network generator (odd-even mergesort). Builds network for the next power of two and prints only pairs inside the working set
@@ -86,7 +85,8 @@ Remaining bytes of stdin after the LDR1 payload go to the normal `CHANNEL_IN` st
 Build LDR1 packet:
 
 ```sh
-python3 tools/mkldr1.py \
+./tools/mkldr1 \
+
   --in-prog programs/sort256_runtime.vm1 \
   --out tmp_sort256.ldrpkt \
   --dst-word-base 0
@@ -290,9 +290,9 @@ Suggested way:
 Project helpers:
 
 ```sh
-make check          # sort2 sanity + vm1 space sort
-./tests/run_echo_ldr1.sh
-./tests/run_sort256_test.sh
+make check          # sort2 sanity + vm1 compat (C)
+make sorter       # regenerate network
+./tools/mkldr1 --in-prog programs/echo.copy3 --out prog.ldrpkt
 ```
 
 ## Glossary

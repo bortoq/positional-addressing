@@ -1,18 +1,30 @@
 CC      ?= cc
-CFLAGS  ?= -Wall -Wextra -Wpedantic -std=c11 -O2
+CFLAGS  ?= -Wall -Wextra -pedantic -std=c11 -O2
 SPACE_SIZE ?= 65520
 
-SRC_DIR  = src
-VM1_SRC  = $(SRC_DIR)/vm1.c
+SRC_DIR   = src
+VM1_SRC   = $(SRC_DIR)/vm1.c
 SORT2_SRC = $(SRC_DIR)/sort2.c
+MKLDR1_SRC = tools/mkldr1.c
+C3_SRC    = tools/copy3_to_vm1.c
+TEST_SORT_SRC = tests/test_sort256.c
+TEST_COMPAT_SRC = tests/test_compat.c
 
-VM1_BIN  = vm1
+VM1_BIN   = vm1
 SORT2_BIN = sort2
-SORTER   = sorter.txt
+MKLDR1_BIN = tools/mkldr1
+C3_BIN    = tools/copy3_to_vm1
+TEST_SORT_BIN = tests/test_sort256
+TEST_COMPAT_BIN = tests/test_compat
+SORTER    = sorter.txt
 
-.PHONY: all clean sorter check test help
+.PHONY: all clean sorter check test help tools tests
 
-all: $(VM1_BIN) $(SORT2_BIN)
+all: $(VM1_BIN) $(SORT2_BIN) tools
+
+tools: $(MKLDR1_BIN) $(C3_BIN)
+
+tests: $(TEST_SORT_BIN) $(TEST_COMPAT_BIN)
 
 $(VM1_BIN): $(VM1_SRC) $(SRC_DIR)/vm1.h $(SRC_DIR)/loader.inc
 	$(CC) $(CFLAGS) $(VM1_SRC) -o $@
@@ -20,32 +32,44 @@ $(VM1_BIN): $(VM1_SRC) $(SRC_DIR)/vm1.h $(SRC_DIR)/loader.inc
 $(SORT2_BIN): $(SORT2_SRC)
 	$(CC) $(CFLAGS) $(SORT2_SRC) -o $@
 
-# Generate default sorting network for current SPACE_SIZE
+$(MKLDR1_BIN): $(MKLDR1_SRC)
+	$(CC) $(CFLAGS) $(MKLDR1_SRC) -o $@
+
+$(C3_BIN): $(C3_SRC)
+	$(CC) $(CFLAGS) $(C3_SRC) -o $@
+
+$(TEST_SORT_BIN): $(TEST_SORT_SRC)
+	$(CC) $(CFLAGS) $(TEST_SORT_SRC) -o $@
+
+$(TEST_COMPAT_BIN): $(TEST_COMPAT_SRC)
+	$(CC) $(CFLAGS) $(TEST_COMPAT_SRC) -o $@
+
+# Generate default sorting network
 sorter: $(SORTER)
 
 $(SORTER): $(SORT2_BIN)
 	./$(SORT2_BIN) $(SPACE_SIZE) > $@
 
-# Run all project tests (no external generator required)
-check: all $(SORTER)
+# Run all project tests (C only, no python)
+check: all $(SORTER) tests
 	@echo "== sort2: 256-pair sanity =="
-	python3 tests/test_sort256_pairs.py
+	./$(TEST_SORT_BIN)
 	@echo "== vm1 channel compat (experimental, may fail with sort2 odd-even) =="
-	@python3 tests/test_sorter_compat.py || echo "(compat: sort2 not fully vm1-compatible, use pairwise gen for full channel test)"
+	@./$(TEST_COMPAT_BIN) || echo "(compat: sort2 not fully vm1-compatible)"
 
 test: check
 
 clean:
-	rm -f $(VM1_BIN) $(SORT2_BIN) $(SORTER)
+	rm -f $(VM1_BIN) $(SORT2_BIN) $(SORTER) $(MKLDR1_BIN) $(C3_BIN) $(TEST_SORT_BIN) $(TEST_COMPAT_BIN)
 	rm -f tmp_* tmp-*
-	rm -rf __pycache__ .pytest_cache
-	find . -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null; true
-	find . -name "*.pyc" -delete 2>/dev/null; true
+
 
 help:
 	@echo "Targets:"
-	@echo "  all     - build vm1 and sort2"
+	@echo "  all     - build vm1, sort2 and tools"
+	@echo "  tools   - build mkldr1 and copy3_to_vm1"
+	@echo "  tests   - build C test binaries"
 	@echo "  sorter  - generate sorter.txt for SPACE_SIZE=$(SPACE_SIZE)"
-	@echo "  check   - run tests"
+	@echo "  check   - run C tests"
 	@echo "  clean   - remove build artifacts"
 	@echo "  help    - this message"

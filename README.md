@@ -13,7 +13,7 @@ make all          # build vm1 and sort2
 make sorter       # ./src/sort2 65520 > sorter.txt
 ./vm1 sorter.txt < input.bin > output.bin
 # with LDR1 load
-python3 tools/mkldr1.py --in-prog programs/echo.copy3 --out prog.ldrpkt
+./tools/mkldr1 --in-prog programs/echo.copy3 --out prog.ldrpkt
 cat prog.ldrpkt input.bin | ./vm1 sorter.txt > out.bin
 make check        # tests
 ```
@@ -21,9 +21,9 @@ make check        # tests
 ## Layout
 
 - `src/` — `vm1.c/.h`, `sort2.c`, `loader.inc`
-- `tools/` — `mkldr1.py`, `copy3_to_vm1.py`
+- `tools/` — `mkldr1`, `copy3_to_vm1` (C)
 - `programs/` — `echo.copy3`, `sort256_runtime.vm1`
-- `tests/` — `test_sort256_pairs.py`, `test_sorter_compat.py`
+- `tests/` — `test_sort256`, `test_compat` (C)
 - `doc/` — full documentation
 
 See `doc/README.md` for architecture, two-phase addressing, hardware cost and glossary.

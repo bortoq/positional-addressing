@@ -3,8 +3,11 @@ sorter.txt
 
 # build artifacts
 vm1
-vm1_life
 sort2
+tools/mkldr1
+tools/copy3_to_vm1
+tests/test_sort256
+tests/test_compat
 *.o
 *.out
 *.bin
@@ -14,17 +17,8 @@ sort2
 tmp_*
 tmp-*
 
-# python
-__pycache__/
-*.pyc
-*.pyo
-.pytest_cache/
-.venv/
-venv/
-
 # editor
 .vscode/
 .idea/
 *~
 .DS_Store
-
