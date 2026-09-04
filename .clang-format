@@ -1,0 +1,21 @@
+BasedOnStyle: Google
+Language: Cpp
+BreakBeforeBraces: Allman
+BraceWrapping:
+  AfterFunction: true
+  AfterControlStatement: Always
+  BeforeElse: true
+IndentWidth: 2
+ColumnLimit: 88
+UseTab: Never
+SpaceBeforeParens: Never
+SpacesInParentheses: false
+SpaceAfterCStyleCast: false
+SpaceBeforeAssignmentOperators: true
+SpaceBeforeSquareBrackets: false
+AllowShortIfStatementsOnASingleLine: false
+AllowShortFunctionsOnASingleLine: None
+KeepEmptyLinesAtTheStartOfBlocks: false
+MaxEmptyLinesToKeep: 1
+AlignConsecutiveAssignments: false
+AlignConsecutiveDeclarations: false
