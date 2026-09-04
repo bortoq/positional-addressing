@@ -38,8 +38,8 @@ The active version implements two-phase addressing:
 - `src/loader.inc` — built-in loader word table in explicit vm1 format `[dst_low, dst_high, src_low, src_high]`
 - `tools/mkldr1` — packer (C) for vm1 programs into LDR1 binary stream
 - `tools/copy3_to_vm1` — compiler (C) from `copy3` (`n dst src`) to vm1 words
-- `programs/sort256_runtime.vm1` — template runtime program for sorting 256 bytes
-- `programs/echo.copy3` — simple echo example (`8 65504 65512`)
+- `examples/sort256_runtime.vm1` — template runtime program for sorting 256 bytes
+- `examples/echo.copy3` — simple echo example (`8 65504 65512`)
 - `src/sort2.c` — sorting network generator (odd-even mergesort). Builds network for the next power of two and prints only pairs inside the working set
 - `sorter.txt` — generated text network for current `SPACE_SIZE` (not committed, run `make sorter`)
 - `tests/` — integration checks for sorting network and channel copy
@@ -87,7 +87,7 @@ Build LDR1 packet:
 ```sh
 ./tools/mkldr1 \
 
-  --in-prog programs/sort256_runtime.vm1 \
+  --in-prog examples/sort256_runtime.vm1 \
   --out tmp_sort256.ldrpkt \
   --dst-word-base 0
 ```
@@ -292,7 +292,7 @@ Project helpers:
 ```sh
 make check          # sort2 sanity + vm1 compat (C)
 make sorter       # regenerate network
-./tools/mkldr1 --in-prog programs/echo.copy3 --out prog.ldrpkt
+./tools/mkldr1 --in-prog examples/echo.copy3 --out prog.ldrpkt
 ```
 
 ## Glossary
