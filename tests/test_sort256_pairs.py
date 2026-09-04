@@ -3,7 +3,7 @@
 Validate 256-element sorting with the project sorter pairs.
 
 This test is external to vm1 runtime code:
-  1. Generate vm1-compatible sorter.txt from pairwise network.
+  1. Generate vm1-compatible sorter.txt from sort2 (odd-even mergesort).
   2. Parse sorter pairs/layers.
   3. Apply the same layered comparator schedule to 256-byte arrays.
   4. Check nondecreasing order after network execution.
@@ -18,12 +18,13 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-GEN = ROOT / "tools" / "gen_pairwise_sorter.py"
 SORTER = ROOT / "sorter.txt"
+SORT2 = ROOT / "sort2"
 
 
 def gen_sorter() -> None:
-    subprocess.run(["python3", str(GEN), "--out", str(SORTER)], check=True)
+    # Build sort2 if needed and generate sorter.txt for current SPACE_SIZE
+    subprocess.run(["make", "-C", str(ROOT), "sorter"], check=True)
 
 
 def parse_layers(path: Path) -> list[list[tuple[int, int]]]:

@@ -5,7 +5,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")"/.. && pwd)"
 SORTER="${ROOT}/sorter.txt"
 
 cc -Wall -Wextra -std=c11 -O2 "$ROOT/vm1.c" -o "$ROOT/vm1"
-python3 "$ROOT/tools/gen_pairwise_sorter.py" --out "$SORTER"
+make -C "$ROOT" sorter
 python3 "$ROOT/tools/mkldr1.py" \
   --in-prog "$ROOT/programs/sort256_runtime.vm1" \
   --out "$ROOT/tmp_sort256.ldrpkt" \
