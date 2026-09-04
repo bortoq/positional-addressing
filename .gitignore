@@ -1,1 +1,29 @@
+# generated sorting network
 sorter.txt
+
+# build artifacts
+vm1
+vm1_life
+sort2
+*.o
+*.out
+*.bin
+*.ldrpkt
+
+# temporary files from experiments and tests
+tmp_*
+tmp-*
+
+# python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.venv/
+venv/
+
+# editor
+.vscode/
+.idea/
+*~
+.DS_Store
