@@ -1,9 +1,7 @@
 /* Loader program encoded as vm1 instruction words:
  * [dst_low, dst_high, src_low, src_high]
  */
-static const idx loader_words[] = {
-  0x003f, 0x2000, 0x1fff, 0x3fc0
-};
+static const idx loader_words[] = {0x003f, 0x2000, 0x1fff, 0x3fc0};
 
 /* Optional design notes for a channel-code loader (not active in vm1 yet):
  *
