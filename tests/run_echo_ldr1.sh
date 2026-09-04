@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")"/.. && pwd)"
 SORTER="${ROOT}/sorter.txt"
 
-cc -Wall -Wextra -std=c11 -O2 "$ROOT/vm1.c" -o "$ROOT/vm1"
+cc -Wall -Wextra -std=c11 -O2 "$ROOT/src/vm1.c" -o "$ROOT/vm1"
 make -C "$ROOT" sorter
 python3 "$ROOT/tools/copy3_to_vm1.py" \
   --in-copy3 "$ROOT/programs/echo.copy3" \

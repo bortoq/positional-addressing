@@ -2,8 +2,9 @@ CC      ?= cc
 CFLAGS  ?= -Wall -Wextra -Wpedantic -std=c11 -O2
 SPACE_SIZE ?= 65520
 
-VM1_SRC  = vm1.c
-SORT2_SRC = sort2.c
+SRC_DIR  = src
+VM1_SRC  = $(SRC_DIR)/vm1.c
+SORT2_SRC = $(SRC_DIR)/sort2.c
 
 VM1_BIN  = vm1
 SORT2_BIN = sort2
@@ -13,7 +14,7 @@ SORTER   = sorter.txt
 
 all: $(VM1_BIN) $(SORT2_BIN)
 
-$(VM1_BIN): $(VM1_SRC) vm1.h loader.inc
+$(VM1_BIN): $(VM1_SRC) $(SRC_DIR)/vm1.h $(SRC_DIR)/loader.inc
 	$(CC) $(CFLAGS) $(VM1_SRC) -o $@
 
 $(SORT2_BIN): $(SORT2_SRC)

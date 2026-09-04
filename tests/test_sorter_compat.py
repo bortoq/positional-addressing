@@ -73,7 +73,7 @@ def make_programs() -> list[Program]:
 
 
 def build_tools() -> None:
-    subprocess.run(["cc", "-Wall", "-Wextra", "-std=c11", "-O2", str(ROOT / "vm1.c"), "-o", str(VM1)], check=True)
+    subprocess.run(["cc", "-Wall", "-Wextra", "-std=c11", "-O2", str(ROOT / "src" / "vm1.c"), "-o", str(VM1)], check=True)
     subprocess.run(["make", "-C", str(ROOT), "sorter"], check=True)
 
 
