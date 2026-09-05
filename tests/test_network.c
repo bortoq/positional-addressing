@@ -6,49 +6,6 @@
 
 #define SORTER "sorter.txt"
 
-static int parse_layers(const char *path, int *out_layers, int *out_max)
-{
-  FILE *f = fopen(path, "r");
-  if (!f) {
-    fprintf(stderr, "cannot open %s\n", path);
-    return -1;
-  }
-  char line[256];
-  int cur = 0;
-  int layers = 0;
-  int in_layer = 0;
-  while (fgets(line, sizeof line, f)) {
-    char *p = line;
-    while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') {
-      p++;
-    }
-    if (*p == '\0' || *p == '\n') {
-      if (in_layer) {
-        layers++;
-        cur = 0;
-        in_layer = 0;
-      }
-      continue;
-    }
-    int a, b;
-    if (sscanf(p, "%d %d", &a, &b) != 2) {
-      continue;
-    }
-    if (a < 256 && b < 256) {
-      cur++;
-      in_layer = 1;
-    }
-  }
-  if (in_layer) {
-    layers++;
-  }
-  fclose(f);
-  if (out_layers) {
-    *out_layers = layers;
-  }
-  return 0;
-}
-
 static int load_and_test(const char *path)
 {
   FILE *f = fopen(path, "r");

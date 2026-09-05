@@ -210,6 +210,7 @@ static net_t seq_pack(const seq_t *seq, uint32_t wires)
   return out;
 }
 
+#ifndef UNIT_TEST
 int main(int argc, char **argv)
 {
   uint32_t space_size = 65520;
@@ -253,3 +254,4 @@ int main(int argc, char **argv)
   net_free(&packed);
   return EXIT_SUCCESS;
 }
+#endif

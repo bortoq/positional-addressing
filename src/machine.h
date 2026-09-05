@@ -36,16 +36,17 @@
 /* --- derived --- */
 
 /* ceil(log2(n)) for n>0 — used for INDEX_SIZE / LAYER_N estimates */
-#if defined(_MSC_VER)
-#define LOG2(N) (int)(sizeof(N) * CHAR_BIT - __builtin_clz((unsigned)(N)))
-#elif defined(__GNUC__) || defined(__GNUG__)
-#define LOG2(N) (int)(sizeof(N) * CHAR_BIT - __builtin_clz((unsigned)(N)))
-#else
-#define LOG2(N) (32 - __builtin_clz((unsigned)(N)))
-#endif
+static inline int ceil_log2_u32(uint32_t n)
+{
+  if (n <= 1) return 0;
+  return 32 - __builtin_clz(n - 1);
+}
+#define CEIL_LOG2(N) ceil_log2_u32((uint32_t)(N))
 
-#define INDEX_SIZE LOG2(SPACE_SIZE) /* bits per index */
-#define LAYER_N (LOG2(SPACE_SIZE) * (LOG2(SPACE_SIZE) + 1) / 2) /* max layers */
+#define INDEX_SIZE CEIL_LOG2(SPACE_SIZE) /* bits per index */
+#define LAYER_N (CEIL_LOG2(SPACE_SIZE) * (CEIL_LOG2(SPACE_SIZE) + 1) / 2) /* max layers */
+#define SPACE_WORDS (SPACE_SIZE / CHAR_BIT / (int)sizeof(idx))
+#define SPACE_BYTES (SPACE_SIZE / CHAR_BIT)
 
 #define CHANNEL_IN (SPACE_SIZE / CHAR_BIT - 1) /* byte offset */
 #define CHANNEL_OUT (SPACE_SIZE / CHAR_BIT - 2)
@@ -61,8 +62,11 @@
 
 #define ARR_SZ(A) (sizeof(A) / sizeof *(A))
 #define GETBIT(SRC, OFF) (1u & ((SRC) >> (OFF)))
-/* branchless bit set: DST[OFF] = SRC (0/1) */
-#define SETBIT(DST, OFF, SRC) DST ^= (-(int)(SRC) ^ (DST)) & (1u << (OFF))
+static inline void set_bit_u8(uint8_t *dst, unsigned off, unsigned src)
+{
+  if (src) *dst |= (uint8_t)(1u << off); else *dst &= (uint8_t) ~(1u << off);
+}
+#define SETBIT(DST, OFF, SRC) set_bit_u8(&(DST), (OFF), (SRC))
 
 /* fail fast with file:line */
 #define E(COND, MSG)                                                                               \

@@ -11,6 +11,7 @@
  *   cat prog.ldrpkt tail.bin | ./vm1 sorter.txt > out.bin
  */
 
+#include <errno.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -28,6 +29,21 @@ static void die2(const char *msg, const char *arg)
 {
   fprintf(stderr, "loader: %s: %s\n", msg, arg);
   exit(1);
+}
+
+static int parse_u16_strict(const char *s, long *out)
+{
+  if (!s || !out) {
+    return -1;
+  }
+  errno = 0;
+  char *end = NULL;
+  long v = strtol(s, &end, 0);
+  if (errno != 0 || end == s || *end != '\0') {
+    return -1;
+  }
+  *out = v;
+  return 0;
 }
 
 static int parse_u16(const char *s, uint16_t *out)
@@ -130,6 +146,12 @@ static uint16_t *parse_vm1_file(const char *path, size_t *out_len)
   if (len > 0xFFFF) {
     die("word_count exceeds uint16");
   }
+  if (len == 0) {
+    /* Пустая программа валидна: вернуть не-NULL заглушку под free(). */
+    static uint16_t empty_sentinel[1];
+    *out_len = 0;
+    return empty_sentinel;
+  }
   *out_len = len;
   return words;
 }
@@ -137,7 +159,7 @@ static uint16_t *parse_vm1_file(const char *path, size_t *out_len)
 static void write_ldr1(const char *out_path, const uint16_t *words, size_t nwords, long dst_base,
                        const char *tail_path)
 {
-  if (!out_path || !words) {
+  if (!out_path || (!words && nwords != 0)) {
     die("internal: null arg");
   }
 
@@ -188,6 +210,7 @@ static void write_ldr1(const char *out_path, const uint16_t *words, size_t nword
 
 /* ---------- main ---------- */
 
+#ifndef UNIT_TEST
 int main(int argc, char **argv)
 {
   const char *in_prog = NULL;
@@ -207,8 +230,14 @@ int main(int argc, char **argv)
     }
     else if (strcmp(argv[i], "--out") == 0 && i + 1 < argc)
       out_file = argv[++i];
-    else if (strcmp(argv[i], "--dst-word-base") == 0 && i + 1 < argc)
-      dst_base = strtol(argv[++i], NULL, 0);
+    else if (strcmp(argv[i], "--dst-word-base") == 0 && i + 1 < argc) {
+      long v = 0;
+      if (parse_u16_strict(argv[++i], &v) != 0) {
+        fprintf(stderr, "loader: --dst-word-base must be uint16, got '%s'\n", argv[i]);
+        return 2;
+      }
+      dst_base = v;
+    }
     else if (strcmp(argv[i], "--tail-bytes") == 0 && i + 1 < argc)
       tail_file = argv[++i];
     else if (strncmp(argv[i], "--in-prog=", 10) == 0)
@@ -230,6 +259,9 @@ int main(int argc, char **argv)
   size_t nwords = 0;
   uint16_t *words = parse_vm1_file(in_prog, &nwords);
   write_ldr1(out_file, words, nwords, dst_base, tail_file);
-  free(words);
+  if (nwords != 0) {
+    free(words);
+  }
   return 0;
 }
+#endif

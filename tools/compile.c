@@ -80,6 +80,7 @@ static int encode_vm1(long n, long dst, long src, long out[4])
 
 /* ---------- main ---------- */
 
+#ifndef UNIT_TEST
 int main(int argc, char **argv)
 {
   const char *in_path = NULL;
@@ -186,3 +187,4 @@ int main(int argc, char **argv)
   printf("compiled %d instructions -> %s\n", count, out_path);
   return 0;
 }
+#endif

@@ -17,29 +17,39 @@
 
 #include "loader.h"
 
+#ifndef UNIT_TEST
+#define STATIC static
+#else
+#define STATIC
+#endif
+
 /* ---------- helpers ---------- */
 
 /* open interval check: pos is strictly inside (low,high) */
-static inline int inside_open(idx pos, idx low, idx high)
+STATIC int inside_open(idx pos, idx low, idx high)
 {
   return pos > low && pos < high;
 }
 
 /* ---------- network storage ---------- */
 
-/* detect repeated wire in current layer → next layer */
-static int last(idx i)
+/* Wire reuse detector for sorter_to_network: returns 1 if wire already used in current layer */
+static unsigned char wire_used[SPACE_SIZE];
+STATIC int is_wire_reused(idx i)
 {
-  static char used[SPACE_SIZE];
-  if (!used[i]) {
-    used[i] = 1;
+  if (!wire_used[i]) {
+    wire_used[i] = 1;
     return 0;
   }
-  memset(used, 0, SPACE_SIZE);
+  memset(wire_used, 0, sizeof wire_used);
   return 1;
 }
+STATIC void wire_used_reset(void)
+{
+  memset(wire_used, 0, sizeof wire_used);
+}
 
-static void layer_reserve(layer *l, size_t need)
+STATIC void layer_reserve(layer *l, size_t need)
 {
   if (need <= l->cap) {
     return;
@@ -54,7 +64,7 @@ static void layer_reserve(layer *l, size_t need)
   l->cap = cap;
 }
 
-static void network_reserve(network *n, size_t need)
+STATIC void network_reserve(network *n, size_t need)
 {
   if (need <= n->cap) {
     return;
@@ -69,20 +79,20 @@ static void network_reserve(network *n, size_t need)
   n->cap = cap;
 }
 
-static void network_add_layer(network *n)
+STATIC void network_add_layer(network *n)
 {
   network_reserve(n, n->count + 1);
   memset(&n->layers[n->count], 0, sizeof n->layers[n->count]);
   n->count++;
 }
 
-static layer *network_last_layer(network *n)
+STATIC layer *network_last_layer(network *n)
 {
   E(n->count == 0, "internal error: missing network layer");
   return &n->layers[n->count - 1];
 }
 
-static void network_push_pair(network *n, idx a, idx b)
+STATIC void network_push_pair(network *n, idx a, idx b)
 {
   if (!n) {
     return; /* guard */
@@ -92,7 +102,7 @@ static void network_push_pair(network *n, idx a, idx b)
   l->pairs[l->count++] = (pair){a, b};
 }
 
-static void network_free(network *n)
+STATIC void network_free(network *n)
 {
   if (!n) {
     return;
@@ -108,16 +118,33 @@ static void network_free(network *n)
 
 /* ---------- sorter file → fabric ---------- */
 
-static int read_pair(FILE *f, idx *a, idx *b)
+STATIC int read_pair(FILE *f, idx *a, idx *b)
 {
   if (!f || !a || !b) {
     return 0;
   }
-  int c = fscanf(f, "%hu%hu", a, b);
-  return c == 2 && !feof(f);
+  char line[256];
+  while (fgets(line, sizeof line, f)) {
+    char *p = line;
+    while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') p++;
+    if (*p == '\0' || *p == '#') continue;
+    char *hash = strchr(p, '#');
+    if (hash) *hash = '\0';
+    unsigned int av, bv;
+    char extra;
+    int c = sscanf(p, "%u %u %c", &av, &bv, &extra);
+    if (c == 2) {
+      if (av > 0xFFFFu || bv > 0xFFFFu) return 0;
+      *a = (idx)av;
+      *b = (idx)bv;
+      return 1;
+    }
+    continue;
+  }
+  return 0;
 }
 
-static void trim_empty_tail_layer(network *net)
+STATIC void trim_empty_tail_layer(network *net)
 {
   if (!net || net->count == 0) {
     return;
@@ -130,20 +157,23 @@ static void trim_empty_tail_layer(network *net)
 }
 
 /* split pairs into layers by wire reuse (like hardware) */
-static void sorter_to_network(machine *vm1, FILE *sorter)
+STATIC void sorter_to_network(machine *vm1, FILE *sorter)
 {
   if (!vm1 || !sorter) {
     return;
   }
   idx l = 0, n = 0, a, b;
+  wire_used_reset();
   memset(&vm1->fabric, 0, sizeof vm1->fabric);
   network_add_layer(&vm1->fabric);
   while (read_pair(sorter, &a, &b)) {
     E(a >= SPACE_SIZE || b >= SPACE_SIZE, "sorter pair out of range");
-    if (last(a) || last(b)) {
+    E(a == b, "sorter pair has equal wires");
+    E(a > b, "sorter pair unordered (expected a<b)");
+    if (is_wire_reused(a) || is_wire_reused(b)) {
       n = 0;
       l++;
-      E(l >= LAYER_N, "number of layer of sorter is too big");
+      E(l >= (idx)LAYER_N, "number of layer of sorter is too big");
       network_add_layer(&vm1->fabric);
     }
     network_push_pair(&vm1->fabric, a, b);
@@ -155,15 +185,44 @@ static void sorter_to_network(machine *vm1, FILE *sorter)
 
 /* ---------- I/O ---------- */
 
-static int channel_read(machine *vm1)
+/* Buffered stdin to handle LDR1 lookahead on non-seekable pipes */
+static uint8_t stdin_pushback[8];
+static size_t stdin_pushback_len = 0;
+static size_t stdin_pushback_pos = 0;
+STATIC int buffered_getc(void)
+{
+  if (stdin_pushback_pos < stdin_pushback_len) {
+    return stdin_pushback[stdin_pushback_pos++];
+  }
+  return fgetc(stdin);
+}
+STATIC void buffered_pushback(const uint8_t *data, size_t len)
+{
+  if (len > sizeof stdin_pushback) len = sizeof stdin_pushback;
+  memcpy(stdin_pushback, data, len);
+  stdin_pushback_len = len;
+  stdin_pushback_pos = 0;
+}
+STATIC int buffered_read_u8(uint8_t *out)
+{
+  if (!out) return -1;
+  int c = buffered_getc();
+  if (c == EOF) return -1;
+  *out = (uint8_t)c;
+  return 0;
+}
+STATIC int channel_read(machine *vm1)
 {
   if (!vm1) {
     return -1;
   }
-  return fread(&vm1->space[CHANNEL_IN], 1, 1, stdin) == 1 ? 0 : -1;
+  uint8_t v;
+  if (buffered_read_u8(&v) != 0) return -1;
+  vm1->space[CHANNEL_IN] = v;
+  return 0;
 }
 
-static int channel_write(machine *vm1)
+STATIC int channel_write(machine *vm1)
 {
   if (!vm1) {
     return -1;
@@ -171,20 +230,12 @@ static int channel_write(machine *vm1)
   return fwrite(&vm1->space[CHANNEL_OUT], 1, 1, stdout) == 1 ? 0 : -1;
 }
 
-static int stream_read_u8(uint8_t *out)
+STATIC int stream_read_u8(uint8_t *out)
 {
-  if (!out) {
-    return -1;
-  }
-  int c = fgetc(stdin);
-  if (c == EOF) {
-    return -1;
-  }
-  *out = (uint8_t)c;
-  return 0;
+  return buffered_read_u8(out);
 }
 
-static int stream_read_u16le(uint16_t *out)
+STATIC int stream_read_u16le(uint16_t *out)
 {
   if (!out) {
     return -1;
@@ -199,40 +250,46 @@ static int stream_read_u16le(uint16_t *out)
 
 /* ---------- space words ---------- */
 
-static idx read_word(const machine *vm1, idx word)
+STATIC idx read_word(const machine *vm1, idx word)
 {
+  E(!vm1, "read_word: null machine");
+  E((size_t)word >= (size_t)SPACE_WORDS, "read_word out of range");
   idx v;
-  memcpy(&v, vm1->space + word * sizeof v, sizeof v);
+  memcpy(&v, vm1->space + (size_t)word * sizeof v, sizeof v);
   return v;
 }
 
-static void write_word(machine *vm1, idx word, idx value)
+STATIC void write_word(machine *vm1, idx word, idx value)
 {
-  memcpy(vm1->space + word * sizeof value, &value, sizeof value);
+  E(!vm1, "write_word: null machine");
+  E((size_t)word >= (size_t)SPACE_WORDS, "write_word out of range");
+  memcpy(vm1->space + (size_t)word * sizeof value, &value, sizeof value);
 }
 
-/* Optional LDR1 loader: "LDR1" + u16 count + u16 base + payload */
-static void maybe_load_program_from_stdin(machine *vm1)
+/* LDR1 loader with pushback for non-seekable stdin */
+STATIC void maybe_load_program_from_stdin(machine *vm1)
 {
   if (!vm1) {
     return;
   }
   uint8_t m[4];
-  long pos = ftell(stdin);
-  if (stream_read_u8(&m[0]) || stream_read_u8(&m[1]) || stream_read_u8(&m[2]) ||
-      stream_read_u8(&m[3]))
+  size_t got = 0;
+  for (got = 0; got < 4; got++) {
+    if (stream_read_u8(&m[got]) != 0) break;
+  }
+  if (got < 4) {
+    if (got > 0) buffered_pushback(m, got);
     return;
+  }
   if (!(m[0] == 'L' && m[1] == 'D' && m[2] == 'R' && m[3] == '1')) {
-    if (pos >= 0) {
-      (void)fseek(stdin, pos, SEEK_SET);
-    }
+    buffered_pushback(m, 4);
     return;
   }
   uint16_t words = 0, base = 0;
   E(stream_read_u16le(&words), "loader protocol: missing word_count");
   E(stream_read_u16le(&base), "loader protocol: missing dst_word_base");
 
-  idx cap = (idx)(sizeof vm1->space / sizeof(idx));
+  idx cap = (idx)SPACE_WORDS;
   E((idx)base >= cap, "loader protocol: dst base out of range");
   E((idx)words > (idx)(cap - (idx)base), "loader protocol: payload out of range");
 
@@ -245,12 +302,12 @@ static void maybe_load_program_from_stdin(machine *vm1)
 
 /* ---------- init ---------- */
 
-static void parse_args_or_die(int argc)
+STATIC void parse_args_or_die(int argc)
 {
   E(argc != 2, HELP);
 }
 
-static void init_origin_keys(machine *vm1)
+STATIC void init_origin_keys(machine *vm1)
 {
   if (!vm1) {
     return;
@@ -260,12 +317,12 @@ static void init_origin_keys(machine *vm1)
   }
 }
 
-static void install_loader(machine *vm1)
+STATIC void install_loader(machine *vm1)
 {
   if (!vm1) {
     return;
   }
-  idx cap = (idx)(sizeof vm1->space / sizeof(idx));
+  idx cap = (idx)SPACE_WORDS;
   idx n = (idx)ARR_SZ(loader_words);
   if (n > cap) {
     return; /* guard: space too small */
@@ -295,7 +352,7 @@ static machine *allocate_machine(int argc, char **argv)
 /* ---------- addressing: stage1 ---------- */
 
 /* sync: dst owns value -> write to space, else read from space */
-static void sync_space_and_subspace(machine *vm1)
+STATIC void sync_space_and_subspace(machine *vm1)
 {
   if (!vm1) {
     return;
@@ -309,7 +366,7 @@ static void sync_space_and_subspace(machine *vm1)
   }
 }
 
-static void reset_stage1_state(machine *vm1)
+STATIC void reset_stage1_state(machine *vm1)
 {
   if (!vm1) {
     return;
@@ -321,16 +378,16 @@ static void reset_stage1_state(machine *vm1)
   }
 }
 
-static idx program_word_limit(const machine *vm1)
+STATIC idx program_word_limit(const machine *vm1)
 {
   (void)vm1;
-  idx total = (idx)(sizeof((machine *)0)->space / sizeof(idx));
+  idx total = (idx)SPACE_WORDS;
   idx proc = PROCESSOR_N * EDGES * WAYS;
   return proc < total ? proc : total;
 }
 
 /* seed one instruction: 4 words -> two interval descriptors */
-static void seed_interval_pair(machine *vm1, idx base_word)
+STATIC void seed_interval_pair(machine *vm1, idx base_word)
 {
   if (!vm1) {
     return;
@@ -358,7 +415,7 @@ static void seed_interval_pair(machine *vm1, idx base_word)
   vm1->subspace[base_word + 1].active = 1;
 }
 
-static void seed_intervals_from_program(machine *vm1)
+STATIC void seed_intervals_from_program(machine *vm1)
 {
   if (!vm1) {
     return;
@@ -369,7 +426,7 @@ static void seed_intervals_from_program(machine *vm1)
   }
 }
 
-static void stage1_init(machine *vm1)
+STATIC void stage1_init(machine *vm1)
 {
   if (!vm1) {
     return;
@@ -380,7 +437,7 @@ static void stage1_init(machine *vm1)
 }
 
 /* copy/move helpers */
-static inline void copy_pos(machine *vm1, idx dst, idx src)
+STATIC void copy_pos(machine *vm1, idx dst, idx src)
 {
   vm1->subspace[dst].key.low = vm1->subspace[src].key.low;
   vm1->subspace[dst].key.high = vm1->subspace[src].key.high;
@@ -389,7 +446,7 @@ static inline void copy_pos(machine *vm1, idx dst, idx src)
   vm1->subspace[dst].active = 1;
 }
 
-static inline void move_pos(machine *vm1, idx dst, idx src)
+STATIC void move_pos(machine *vm1, idx dst, idx src)
 {
   copy_pos(vm1, dst, src);
   vm1->subspace[src].active = 0;
@@ -397,7 +454,7 @@ static inline void move_pos(machine *vm1, idx dst, idx src)
 }
 
 /* stage1: propagate active interval to the right */
-static void stage1_from_left(machine *vm1, idx left, idx right)
+STATIC void stage1_from_left(machine *vm1, idx left, idx right)
 {
   if (!vm1 || vm1->subspace[left].active == 0) {
     return;
@@ -406,6 +463,7 @@ static void stage1_from_left(machine *vm1, idx left, idx right)
   /* interval (low,high) open */
   idx low = vm1->subspace[left].key.low;
   idx high = vm1->subspace[left].key.high;
+  idx partner = vm1->subspace[left].key.partner;
 
   if (low > left && low > right) {
     /* both outside on the left -> move */
@@ -413,15 +471,15 @@ static void stage1_from_left(machine *vm1, idx left, idx right)
   } else if (low > left && inside_open(right, low, high)) {
     /* right is first position inside -> move + mark sort */
     move_pos(vm1, right, left);
-    vm1->subspace[right].key.sort = vm1->subspace[left].key.partner;
+    vm1->subspace[right].key.sort = partner;
   } else if (left > low && high > right) {
     /* both inside (left<right assumed) -> copy + mark */
     copy_pos(vm1, right, left);
-    vm1->subspace[right].key.sort = vm1->subspace[left].key.partner;
+    vm1->subspace[right].key.sort = partner;
   }
 }
 
-static void stage1_from_right(machine *vm1, idx left, idx right)
+STATIC void stage1_from_right(machine *vm1, idx left, idx right)
 {
   if (!vm1 || vm1->subspace[right].active == 0) {
     return;
@@ -429,19 +487,20 @@ static void stage1_from_right(machine *vm1, idx left, idx right)
 
   idx low = vm1->subspace[right].key.low;
   idx high = vm1->subspace[right].key.high;
+  idx partner = vm1->subspace[right].key.partner;
 
   if (right > high && left > high) {
     move_pos(vm1, left, right);
   } else if (right > high && low > left && left > high) {
     move_pos(vm1, left, right);
-    vm1->subspace[left].key.sort = vm1->subspace[right].key.partner;
+    vm1->subspace[left].key.sort = partner;
   } else if (high > right && left > low) {
     copy_pos(vm1, left, right);
-    vm1->subspace[left].key.sort = vm1->subspace[right].key.partner;
+    vm1->subspace[left].key.sort = partner;
   }
 }
 
-static void stage1_pair(machine *vm1, idx a, idx b)
+STATIC void stage1_pair(machine *vm1, idx a, idx b)
 {
   if (!vm1) {
     return;
@@ -455,7 +514,7 @@ static void stage1_pair(machine *vm1, idx a, idx b)
 
 /* ---------- addressing: stage2 ---------- */
 
-static void stage2_init(machine *vm1)
+STATIC void stage2_init(machine *vm1)
 {
   if (!vm1) {
     return;
@@ -465,7 +524,7 @@ static void stage2_init(machine *vm1)
   }
 }
 
-static inline void swap_sort_and_partner(machine *vm1, idx l, idx r)
+STATIC void swap_sort_and_partner(machine *vm1, idx l, idx r)
 {
   idx tmp_sort = vm1->subspace[l].key.sort;
   idx tmp_partner = vm1->subspace[l].key.partner;
@@ -475,7 +534,7 @@ static inline void swap_sort_and_partner(machine *vm1, idx l, idx r)
   vm1->subspace[r].key.partner = tmp_partner;
 }
 
-static inline void move_value_and_role(machine *vm1, idx l, idx r)
+STATIC void move_value_and_role(machine *vm1, idx l, idx r)
 {
   if (!vm1 || vm1->subspace[l].active == 0) {
     return;
@@ -491,7 +550,7 @@ static inline void move_value_and_role(machine *vm1, idx l, idx r)
   }
 }
 
-static void stage2_pair(machine *vm1, idx a, idx b)
+STATIC void stage2_pair(machine *vm1, idx a, idx b)
 {
   if (!vm1) {
     return;
@@ -505,7 +564,7 @@ static void stage2_pair(machine *vm1, idx a, idx b)
 
 /* ---------- run ---------- */
 
-static void run_network(machine *vm1, void (*pair_op)(machine *, idx, idx))
+STATIC void run_network(machine *vm1, void (*pair_op)(machine *, idx, idx))
 {
   if (!vm1 || !pair_op) {
     return;
@@ -516,7 +575,7 @@ static void run_network(machine *vm1, void (*pair_op)(machine *, idx, idx))
     }
 }
 
-static void run_cycle(machine *vm1, void (**inits)(machine *), void (**pairs)(machine *, idx, idx),
+STATIC void run_cycle(machine *vm1, void (**inits)(machine *), void (**pairs)(machine *, idx, idx),
                       idx n)
 {
   if (!vm1 || !inits || !pairs) {
@@ -528,7 +587,7 @@ static void run_cycle(machine *vm1, void (**inits)(machine *), void (**pairs)(ma
   }
 }
 
-static void run_channels(machine *vm1, void (**inits)(machine *),
+STATIC void run_channels(machine *vm1, void (**inits)(machine *),
                          void (**pairs)(machine *, idx, idx), idx n)
 {
   if (!vm1) {
@@ -544,6 +603,7 @@ static void run_channels(machine *vm1, void (**inits)(machine *),
   }
 }
 
+#ifndef UNIT_TEST
 int main(int argc, char **argv)
 {
   machine *vm1 = allocate_machine(argc, argv);
@@ -556,3 +616,4 @@ int main(int argc, char **argv)
   free(vm1);
   return 0;
 }
+#endif

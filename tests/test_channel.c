@@ -62,9 +62,20 @@ static int run_vm1(const char *sorter, const uint8_t *pkt, size_t pkt_len, uint8
     return -1;
   }
   pid_t pid = fork();
+  if (pid < 0) {
+    close(pin[0]);
+    close(pin[1]);
+    close(pout[0]);
+    close(pout[1]);
+    return -1;
+  }
   if (pid == 0) {
-    dup2(pin[0], STDIN_FILENO);
-    dup2(pout[1], STDOUT_FILENO);
+    if (dup2(pin[0], STDIN_FILENO) < 0) {
+      _exit(127);
+    }
+    if (dup2(pout[1], STDOUT_FILENO) < 0) {
+      _exit(127);
+    }
     close(pin[0]);
     close(pin[1]);
     close(pout[0]);
@@ -74,7 +85,19 @@ static int run_vm1(const char *sorter, const uint8_t *pkt, size_t pkt_len, uint8
   }
   close(pin[0]);
   close(pout[1]);
-  write(pin[1], pkt, pkt_len);
+  size_t written = 0;
+  while (written < pkt_len) {
+    ssize_t w = write(pin[1], pkt + written, pkt_len - written);
+    if (w < 0) {
+      close(pin[1]);
+      close(pout[0]);
+      return -1;
+    }
+    if (w == 0) {
+      break;
+    }
+    written += (size_t)w;
+  }
   close(pin[1]);
   ssize_t n = 0, total = 0;
   while ((n = read(pout[0], out + total, 4096 - total)) > 0) {

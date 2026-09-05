@@ -8,6 +8,10 @@ tools/loader
 tools/compile
 tests/test_network
 tests/test_channel
+tests/test_machine
+tests/test_network_unit
+tests/test_loader
+tests/test_compile
 *.o
 *.out
 *.bin
