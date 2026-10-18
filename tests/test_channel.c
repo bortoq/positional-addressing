@@ -1,4 +1,4 @@
-/* test_compat - vm1 channel copy compat via LDR1 (C port, sort-based, non-gating) */
+/* test_compat - vm1 channel copy compat via LDR1 (exact latency, gating) */
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -27,31 +27,10 @@ typedef struct {
 
 static void enc(int n, int dst, int src, uint16_t *out)
 {
-  out[0] = dst - 1;
+  out[0] = dst;
   out[1] = dst + n;
-  out[2] = src - 1;
+  out[2] = src;
   out[3] = src + n;
-}
-
-static int fits_shift(const uint8_t *inp, size_t in_len, const uint8_t *out, size_t out_len)
-{
-  for (int drop = 0; drop <= 2; drop++) {
-    for (int s = 0; s <= 8; s++) {
-      int ok = 1;
-      for (size_t i = 0; i < out_len; i++) {
-        long j = (long)i - s + drop;
-        uint8_t exp = (i < (size_t)s) ? 0 : (j >= 0 && j < (long)in_len ? inp[j] : 0);
-        if (out[i] != exp) {
-          ok = 0;
-          break;
-        }
-      }
-      if (ok) {
-        return 1;
-      }
-    }
-  }
-  return 0;
 }
 
 static int run_vm1(const char *sorter, const uint8_t *pkt, size_t pkt_len, uint8_t *out,
@@ -116,7 +95,7 @@ static size_t make_ldr1(uint16_t *words, size_t nw, uint8_t *tail, size_t tail_l
   out[4] = nw & 0xFF;
   out[5] = (nw >> 8) & 0xFF;
   out[6] = 0;
-  out[7] = 2; /* dst base 512 (0x0200) */
+  out[7] = 0; /* install processor directly; no resident loader */
   size_t p = 8;
   for (size_t i = 0; i < nw; i++) {
     out[p++] = words[i] & 0xFF;
@@ -158,29 +137,19 @@ int main(void)
     uint8_t *d;
     size_t l;
   } cases[] = {{"ascii", c1, 10}, {"inc", c2, 64}, {"dec", c3, 64}, {"rnd", c4, 64}};
-  uint16_t echo_w[4], chain_w[8], dual_w[12];
-  uint16_t t4[4];
-  enc(8, CHANNEL_OUT_LO, CHANNEL_IN_LO, t4);
-  memcpy(echo_w, t4, sizeof t4);
-  enc(8, TMP0, CHANNEL_IN_LO, t4);
-  memcpy(chain_w, t4, sizeof t4);
-  enc(8, CHANNEL_OUT_LO, TMP0, t4);
-  memcpy(chain_w + 4, t4, sizeof t4);
-  enc(8, TMP0, CHANNEL_IN_LO, t4);
-  memcpy(dual_w, t4, sizeof t4);
-  enc(8, TMP1, CHANNEL_IN_LO, t4);
-  memcpy(dual_w + 4, t4, sizeof t4);
-  enc(8, CHANNEL_OUT_LO, TMP1, t4);
-  memcpy(dual_w + 8, t4, sizeof t4);
+  uint16_t echo_w[4];
+  enc(8, CHANNEL_OUT_LO, CHANNEL_IN_LO, echo_w);
+  /* Legacy chain/dual fixtures reused interval positions in the same tick.
+   * They are outside the valid-program contract and cannot prove copying. */
   struct {
     const char *name;
     uint16_t *w;
     size_t n;
-  } progs[] = {{"echo", echo_w, 4}, {"chain", chain_w, 8}, {"dual", dual_w, 12}};
+  } progs[] = {{"echo", echo_w, 4}};
 
   int passed = 0, failed = 0;
   uint8_t pkt[8192], out[4096];
-  for (int pi = 0; pi < 3; pi++) {
+  for (int pi = 0; pi < 1; pi++) {
     for (int ci = 0; ci < 4; ci++) {
       size_t pkt_len = make_ldr1(progs[pi].w, progs[pi].n, cases[ci].d, cases[ci].l, pkt);
       size_t out_len = 0;
@@ -192,16 +161,12 @@ int main(void)
         continue;
       }
       size_t n = cases[ci].l < LIFE ? cases[ci].l : LIFE;
-      if (n > out_len) {
-        n = out_len;
+      int fits = out_len == n;
+      for (size_t i = 0; fits && i < n; i++) {
+        uint8_t expected = i == 0 ? 0 : cases[ci].d[i-1];
+        fits = out[i] == expected;
       }
-      int has_nonzero = 0;
-      for (size_t i = 0; i < n; i++)
-        if (out[i]) {
-          has_nonzero = 1;
-        }
-      int fits = fits_shift(cases[ci].d, cases[ci].l, out, n);
-      if (has_nonzero && fits) {
+      if (fits) {
         passed++;
       }
       else {
@@ -221,8 +186,8 @@ int main(void)
   }
   printf("=== sorter compatibility summary ===\n sort: pass=%d fail=%d\n", passed, failed);
   if (failed) {
-    fprintf(stderr, "NOTE: sort is pairwise stable; compat should pass (12/12)\n");
-    return 0; /* non-gating */
+    fprintf(stderr, "NOTE: sort is pairwise stable; exact echo should pass (4/4)\n");
+    return 1; /* a failed compatibility check must fail make check */
   }
   return 0;
 }

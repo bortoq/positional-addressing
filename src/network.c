@@ -1,9 +1,9 @@
 /*
- * Pairwise sorting network generator (stable, for 2-phase positional addressing)
+ * Pairwise sorting network generator
  *
  * Generates a pairwise network (power-of-two only, padded otherwise).
- * Pairwise is stable: equal keys keep order, so 2-phase addressing works
- * without the third reordering step.
+ * Non-adjacent exchanges are not generally stable for equal keys.
+ * The two-phase addressing model must not assume tie stability.
  *
  * For arbitrary SPACE_SIZE:
  *  1) build pairwise network for next power of two >= SPACE_SIZE

@@ -4,12 +4,13 @@
  * Input  (copy3):  n dst src   (bit counts and start positions)
  *          n >=0, dst/src >=0, comments after '#'
  * Output (vm1):   dst_low dst_high src_low src_high per line
- *          encoding: low = start-1, high = start+n  (open interval)
+ *          encoding: low = start, high = start+n  (half-open interval)
  *          copied bits are [start, start+n-1]
  *
- * Example: "8 65504 65512" -> "65503 65512 65511 65520"
+ * Example: "8 65504 65512" -> "65504 65512 65512 65520"
  */
 
+#include <errno.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -53,24 +54,24 @@ static long parse_long(const char *s, int *ok)
     return -1;
   }
   char *end = NULL;
+  errno = 0;
   long v = strtol(s, &end, 0);
-  *ok = (end != s && *end == '\0');
+  *ok = (errno != ERANGE && end != s && *end == '\0');
   return v;
 }
 
 /* encode one copy -> 4 vm1 words, check u16 range */
 static int encode_vm1(long n, long dst, long src, long out[4])
 {
-  if (!out) {
+  /* Check before adding: even LONG_MAX inputs must not overflow signed long. */
+  if (!out || n < 0 || dst < 0 || src < 0 || dst > UINT16_MAX || src > UINT16_MAX ||
+      n > UINT16_MAX - dst || n > UINT16_MAX - src) {
     return -1;
   }
-  long dl = dst - 1;
+  long dl = dst;
   long dh = dst + n;
-  long sl = src - 1;
+  long sl = src;
   long sh = src + n;
-  if (dl < 0 || dl > 0xFFFF || dh < 0 || dh > 0xFFFF || sl < 0 || sl > 0xFFFF || sh < 0 ||
-      sh > 0xFFFF)
-    return -1;
   out[0] = dl;
   out[1] = dh;
   out[2] = sl;

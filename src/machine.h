@@ -1,9 +1,9 @@
 /*
  * vm1 — positional addressing definitions
  *
- * Demo 2: 2-phase addressing via stable pairwise sorting network.
- * Interval = open (low,high) -> bits [low+1, high-1] copied.
- * Only operation on keys is '>' compare.
+ * Demo 2: three-phase addressing via a pairwise sorting network.
+ * Interval = half-open [low,high) -> bits low through high-1 copied.
+ * Boundary predicates use strict/non-strict compares; stage2 uses >.
  *
  * 2025-02-05, dmitri bortoq (bortoq@gmail.com), MIT license
  */
@@ -32,6 +32,10 @@
 #ifndef LIFE
 #define LIFE 0x10 /* max compute cycles per run */
 #endif
+
+/* An exclusive endpoint must fit idx without an extra address bit. */
+_Static_assert(SPACE_SIZE >= 16 && SPACE_SIZE <= UINT16_MAX, "space endpoint must fit idx");
+_Static_assert(SPACE_SIZE % 16 == 0, "space must contain whole idx words");
 
 /* --- derived --- */
 
@@ -99,19 +103,19 @@ typedef struct { /* full network */
 
 /* addressing key per position — see doc/README.md */
 typedef struct {
-  idx low; /* interval low (excluded) */
+  idx low; /* interval low (included) */
   idx high; /* interval high (excluded) */
-  idx partner; /* paired interval low */
-  idx sort; /* current sort key */
+  idx partner; /* stage1: paired lower bound; stage2/3: transported source origin */
+  idx sort; /* target group key, retained through stage3 */
   idx origin; /* fixed position id */
 } position_key;
 
 typedef struct {
   data space[SPACE_SIZE / CHAR_BIT]; /* packed bits */
   struct {
-    data value;
-    bit active; /* participates this phase? */
-    bit role; /* 0=dst side, 1=src side (owns value) */
+    data value; /* stage1: token direction; stage2/3: actual bit payload */
+    bit active; /* stage1: this position has the current broadcast token */
+    bit role; /* stage1: source position; after stage2: destination to commit */
     position_key key;
   } subspace[SPACE_SIZE];
   network fabric; /* sorting network */

@@ -24,6 +24,9 @@ TEST_MACHINE_BIN = tests/test_machine
 TEST_NETUNIT_BIN = tests/test_network_unit
 TEST_LOADER_BIN = tests/test_loader
 TEST_COMPILE_BIN = tests/test_compile
+TEST_ADDRESS_BIN = tests/test_addressing
+TEST_ADDRESS_SMALL_BIN = tests/test_addressing_small
+SMALL_SORTER = tests/sorter-small.txt
 SORTER    = sorter.txt
 
 .PHONY: all clean sorter check test help tools tests
@@ -32,7 +35,7 @@ all: $(VM1_BIN) $(SORT_BIN) tools
 
 tools: $(MKLDR1_BIN) $(C3_BIN)
 
-tests: $(TEST_SORT_BIN) $(TEST_COMPAT_BIN) $(TEST_MACHINE_BIN) $(TEST_NETUNIT_BIN) $(TEST_LOADER_BIN) $(TEST_COMPILE_BIN)
+tests: $(TEST_SORT_BIN) $(TEST_COMPAT_BIN) $(TEST_MACHINE_BIN) $(TEST_NETUNIT_BIN) $(TEST_LOADER_BIN) $(TEST_COMPILE_BIN) $(TEST_ADDRESS_BIN) $(TEST_ADDRESS_SMALL_BIN)
 
 $(VM1_BIN): $(VM1_SRC) $(SRC_DIR)/machine.h $(SRC_DIR)/loader.h
 	$(CC) $(CFLAGS) $(VM1_SRC) -o $@
@@ -64,6 +67,20 @@ $(TEST_LOADER_BIN): $(TEST_LOADER_SRC) tools/loader.c
 $(TEST_COMPILE_BIN): $(TEST_COMPILE_SRC) tools/compile.c
 	$(CC) $(CFLAGS) -DUNIT_TEST $(TEST_COMPILE_SRC) -o $@
 
+$(TEST_ADDRESS_BIN): tests/test_addressing.c $(VM1_SRC) $(SRC_DIR)/machine.h $(SRC_DIR)/loader.h
+	$(CC) $(CFLAGS) tests/test_addressing.c -o $@
+
+$(TEST_ADDRESS_SMALL_BIN): tests/test_addressing.c $(VM1_SRC) $(SRC_DIR)/machine.h $(SRC_DIR)/loader.h
+	$(CC) $(CFLAGS) -DSPACE_SIZE=256 -DPROCESSOR_N=2 tests/test_addressing.c -o $@
+
+$(SMALL_SORTER): $(SORT_BIN)
+	./$(SORT_BIN) 256 > $@
+
+.PHONY: check-addressing
+check-addressing: $(TEST_ADDRESS_BIN) $(TEST_ADDRESS_SMALL_BIN) $(SORTER) $(SMALL_SORTER)
+	@status=0; ./$(TEST_ADDRESS_SMALL_BIN) $(SMALL_SORTER) || status=1; \
+	./$(TEST_ADDRESS_BIN) $(SORTER) || status=1; exit $$status
+
 # Generate default sorting network
 sorter: $(SORTER)
 
@@ -71,7 +88,7 @@ $(SORTER): $(SORT_BIN)
 	./$(SORT_BIN) $(SPACE_SIZE) > $@
 
 # Run all project tests (C only, no python)
-check: all $(SORTER) tests
+check: all $(SORTER) $(SMALL_SORTER) tests
 	@echo "== machine unit (per-function) =="
 	./$(TEST_MACHINE_BIN)
 	@echo "== network unit (per-function) =="
@@ -82,13 +99,16 @@ check: all $(SORTER) tests
 	./$(TEST_COMPILE_BIN)
 	@echo "== sort: 256-pair sanity =="
 	./$(TEST_SORT_BIN)
-	@echo "== vm1 channel compat (pairwise stable, 2-phase) =="
+	@echo "== vm1 channel compat (exact echo, 3-phase) =="
 	./$(TEST_COMPAT_BIN)
+	@echo "== independent simultaneous-copy oracle =="
+	$(MAKE) check-addressing
 
 test: check
 
 clean:
-	rm -f $(VM1_BIN) $(SORT_BIN) $(SORTER) $(MKLDR1_BIN) $(C3_BIN) $(TEST_SORT_BIN) $(TEST_COMPAT_BIN) $(TEST_MACHINE_BIN) $(TEST_NETUNIT_BIN) $(TEST_LOADER_BIN) $(TEST_COMPILE_BIN)
+	rm -f $(VM1_BIN) $(SORT_BIN) $(SORTER) $(MKLDR1_BIN) $(C3_BIN) $(TEST_SORT_BIN) $(TEST_COMPAT_BIN) $(TEST_MACHINE_BIN) $(TEST_NETUNIT_BIN) $(TEST_LOADER_BIN) $(TEST_COMPILE_BIN) $(TEST_ADDRESS_BIN) $(TEST_ADDRESS_SMALL_BIN)
+	rm -f $(SMALL_SORTER)
 	rm -f tmp_* tmp-*
 
 help:

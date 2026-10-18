@@ -26,3 +26,8 @@ tmp-*
 .idea/
 *~
 .DS_Store
+
+# independent addressing tests
+tests/test_addressing
+tests/test_addressing_small
+tests/sorter-small.txt

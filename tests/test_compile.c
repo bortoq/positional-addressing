@@ -2,6 +2,7 @@
 #define _POSIX_C_SOURCE 200809L
 #define UNIT_TEST 1
 #include "../tools/compile.c"
+#include <limits.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -28,6 +29,8 @@ static void test_parse_long(void){
   int ok=0;
   CHECK(parse_long("42",&ok)==42 && ok, "parse_long 42");
   CHECK(parse_long("0x10",&ok)==16 && ok, "parse_long hex");
+  parse_long("99999999999999999999999999999999999", &ok);
+  CHECK(!ok, "parse_long overflow");
   CHECK(parse_long("-5",&ok)==-5 && ok, "parse_long negative");
   parse_long("abc",&ok);
   CHECK(!ok, "parse_long junk");
@@ -44,9 +47,17 @@ static void test_parse_long(void){
 static void test_encode_vm1(void){
   long out[4];
   CHECK(encode_vm1(8,65504,65512,out)==0, "encode echo");
-  CHECK(out[0]==65503 && out[1]==65512 && out[2]==65511 && out[3]==65520, "encode echo words");
-  CHECK(encode_vm1(0,100,200,out)==0 && out[0]==99 && out[1]==100, "encode n=0");
-  CHECK(encode_vm1(8,0,100,out)!=0, "encode dst=0 underflow (low=-1)");
+  CHECK(out[0]==65504 && out[1]==65512 && out[2]==65512 && out[3]==65520, "encode echo words");
+  CHECK(encode_vm1(0,100,200,out)==0 && out[0]==100 && out[1]==100 && out[2]==200 && out[3]==200, "encode n=0");
+  CHECK(encode_vm1(8,0,100,out)==0 && out[0]==0 && out[1]==8, "encode dst=0");
+  CHECK(encode_vm1(1,65534,0,out)==0 && out[1]==65535 && out[2]==0, "encode maximum endpoint and src=0");
+  CHECK(encode_vm1(0,0,0,out)==0 && out[0]==out[1] && out[2]==out[3], "encode zero NOP");
+  CHECK(encode_vm1(-1,100,200,out)!=0, "encode negative length");
+  CHECK(encode_vm1(1,-1,200,out)!=0, "encode negative destination");
+  CHECK(encode_vm1(1,100,-1,out)!=0, "encode negative source");
+  CHECK(encode_vm1(LONG_MAX,1,2,out)!=0, "encode LONG_MAX length");
+  CHECK(encode_vm1(1,LONG_MAX,2,out)!=0, "encode LONG_MAX address");
+  CHECK(encode_vm1(0,65536,0,out)!=0, "encode endpoint does not wrap");
   CHECK(encode_vm1(8,65530,100,out)!=0, "encode dst high overflow");
   CHECK(encode_vm1(8,100,65530,out)!=0, "encode src high overflow");
   CHECK(encode_vm1(70000,100,200,out)!=0, "encode n huge overflow");
@@ -71,7 +82,7 @@ static void test_cli_roundtrip(void){
   FILE *o=fopen("/tmp/tc_out.vm1","r");
   long a,b,c,d;
   CHECK(o && fscanf(o,"%ld %ld %ld %ld",&a,&b,&c,&d)==4, "compile output 4 words");
-  CHECK(a==65503&&b==65512&&c==65511&&d==65520, "compile output values");
+  CHECK(a==65504&&b==65512&&c==65512&&d==65520, "compile output values");
   if(o) fclose(o);
   unlink("/tmp/tc_in.asm");
   unlink("/tmp/tc_out.vm1");
