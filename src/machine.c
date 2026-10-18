@@ -5,11 +5,12 @@
  * destination ranges of a cycle must be pairwise disjoint and paired lengths
  * equal. Ordinary copies may replace the processor for the following cycle.
  *
- * stage1: broadcast/classify one interval at a time through the same fabric;
+ * stage1: decode all slots independently and classify intervals collectively;
  * stage2: sort complete data records by the paired interval's lower boundary;
  * stage3: restore source-origin order within each copied destination group.
- * The network need not be stable. value doubles as the descriptor's role bit
- * during stage1; actual data remains in space and is loaded for stage2.
+ * The network need not be stable. Stage1 sorts descriptors, then splits
+ * intervals through a butterfly; absent wires reuse existing scratch words.
+ * Actual data remains in space and is loaded for stage2.
  *
  * 2024-2026, dmitri bortoq (bortoq@gmail.com), MIT license
  */
@@ -400,66 +401,269 @@ STATIC idx program_word_limit(const machine *vm1)
   return proc < total ? proc : total;
 }
 
-/* Phase 1 borrows value as a one-bit source/destination token. The actual
- * data remains in space until stage2_init; role/sort store the positional
- * classification and are never transported with the broadcast token. */
-STATIC void mark_pos(machine *vm1, idx pos)
+/* Descriptor sorting followed by monotone interval splitting. Packed ghost
+ * records reuse sort/origin/role; primary records use low/high/partner/value/
+ * active. Real bit payloads remain in space until stage2_init. */
+#ifndef VM1_LAYER
+#define VM1_LAYER(name) ((void)0)
+#endif
+#ifndef VM1_LINK
+#define VM1_LINK(a, b) ((void)0)
+#endif
+_Static_assert(PROCESSOR_N >= 1 && PROCESSOR_N <= 128,
+               "the hardware processor has at most 128 independent slots");
+#define GHOST_BASE ((idx)(SPACE_SIZE & ~255u))
+
+typedef struct {
+  idx low, high, paired;
+  bit source;
+} interval_record;
+
+STATIC interval_record interval_get(const machine *vm, idx i)
 {
-  if (inside_half_open(pos, vm1->subspace[pos].key.low, vm1->subspace[pos].key.high)) {
-    vm1->subspace[pos].key.sort = vm1->subspace[pos].key.partner;
-    vm1->subspace[pos].role = vm1->subspace[pos].value;
+  return (interval_record){vm->subspace[i].key.low, vm->subspace[i].key.high,
+                           vm->subspace[i].key.partner, vm->subspace[i].value};
+}
+STATIC void interval_put(machine *vm, idx i, interval_record r)
+{
+  vm->subspace[i].key.low = r.low;
+  vm->subspace[i].key.high = r.high;
+  vm->subspace[i].key.partner = r.paired;
+  vm->subspace[i].value = r.source;
+  vm->subspace[i].active = (bit)(r.low < r.high);
+}
+STATIC interval_record empty_interval(void)
+{
+  return (interval_record){SPACE_SIZE, SPACE_SIZE, 0, 0};
+}
+STATIC interval_record ghost_get(const machine *vm, idx i)
+{
+  idx packed = vm->subspace[i].key.sort;
+  if (!packed)
+    return empty_interval();
+  return (interval_record){(idx)(GHOST_BASE | (packed >> 8)),
+                           (idx)(GHOST_BASE | (packed & 255u)),
+                           vm->subspace[i].key.origin, vm->subspace[i].role};
+}
+STATIC void ghost_put(machine *vm, idx i, interval_record r)
+{
+  if (r.low >= r.high) {
+    vm->subspace[i].key.sort = 0;
+    return;
+  }
+  /* For at most 256 sorted descriptor inputs every live ghost interval is
+   * contained in [GHOST_BASE, SPACE_SIZE), whose endpoints fit in 8 bits.
+   * These bit slices are fixed wiring, not addition/subtraction of keys. */
+  E(r.low < GHOST_BASE || r.high > SPACE_SIZE ||
+        (r.low & ~255u) != GHOST_BASE || (r.high & ~255u) != GHOST_BASE,
+    "ghost interval exceeds fixed packed endpoint window");
+  vm->subspace[i].key.sort = (idx)(((r.low & 255u) << 8) | (r.high & 255u));
+  vm->subspace[i].key.origin = r.paired;
+  vm->subspace[i].role = r.source;
+}
+STATIC interval_record interval_left(interval_record r, idx split)
+{
+  if (r.high > split)
+    r.high = split;
+  return r.low < r.high ? r : empty_interval();
+}
+STATIC interval_record interval_right(interval_record r, idx split)
+{
+  if (r.low < split)
+    r.low = split;
+  return r.low < r.high ? r : empty_interval();
+}
+STATIC interval_record interval_union(interval_record a, interval_record b)
+{
+  E(a.low < a.high && b.low < b.high, "collision in monotone interval splitter");
+  return a.low < a.high ? a : b;
+}
+STATIC void interval_split_pair(machine *vm, idx a, idx b, idx split, bit ghost)
+{
+  VM1_LINK(a, b);
+  interval_record x = ghost ? ghost_get(vm, a) : interval_get(vm, a);
+  interval_record y = ghost ? ghost_get(vm, b) : interval_get(vm, b);
+  interval_record left = interval_union(interval_left(x, split), interval_left(y, split));
+  interval_record right = interval_union(interval_right(x, split), interval_right(y, split));
+  if (ghost) {
+    ghost_put(vm, a, left);
+    ghost_put(vm, b, right);
+  } else {
+    interval_put(vm, a, left);
+    interval_put(vm, b, right);
+  }
+}
+STATIC void interval_sort_pair(machine *vm, idx a, idx b)
+{
+  VM1_LINK(a, b);
+  interval_record x = interval_get(vm, a), y = interval_get(vm, b);
+  if (x.low > y.low) {
+    interval_put(vm, a, y);
+    interval_put(vm, b, x);
+  }
+}
+STATIC size_t interval_padded_size(void)
+{
+  size_t padded = 1;
+  while (padded < SPACE_SIZE)
+    padded *= 2;
+  return padded;
+}
+
+/* A real/ghost pair a,g is executed through three physical positions:
+ * A=a, B=g-H (ghost storage), C=a-H (free scratch), H=padded/2.
+ * B--C and A--C are existing links of lengths d and H. The triples for
+ * distinct crossing pairs are disjoint. Five sublayers preserve four
+ * outgoing branches without adding a persistent register. */
+STATIC void split_crossing_pairs(machine *vm, size_t padded, size_t d)
+{
+  size_t half = padded / 2;
+  if (d == half) {
+    /* The top-level absent output and its lower input share one cell. */
+    VM1_LAYER("split-cross-local");
+    for (size_t g = SPACE_SIZE; g < padded; g++) {
+      idx a = (idx)(g - half);
+      VM1_LINK(a, a);
+      interval_record x = interval_get(vm, a), y = ghost_get(vm, a);
+      interval_put(vm, a, interval_union(interval_left(x, (idx)half),
+                                          interval_left(y, (idx)half)));
+      ghost_put(vm, a, interval_union(interval_right(x, (idx)half),
+                                       interval_right(y, (idx)half)));
+    }
+    return;
+  }
+  for (unsigned step = 0; step < 5; step++) {
+    VM1_LAYER("split-cross");
+    for (size_t g = SPACE_SIZE; g < padded; g++) {
+      if (!(g & d) || g - d >= SPACE_SIZE)
+        continue;
+      idx a = (idx)(g - d), b = (idx)(g - half), c = (idx)(g - d - half);
+      idx split = (idx)((g & ~(2 * d - 1)) + d);
+      if (step == 0) {
+        VM1_LINK(a, a);
+        interval_record x = interval_get(vm, a);
+        interval_put(vm, a, interval_left(x, split));
+        ghost_put(vm, a, interval_right(x, split));
+        VM1_LINK(c, b);
+        interval_record y = ghost_get(vm, b);
+        ghost_put(vm, c, interval_right(y, split));
+        ghost_put(vm, b, interval_left(y, split));
+      } else if (step == 1 || step == 3) {
+        VM1_LINK(c, a);
+        interval_record x = ghost_get(vm, a), y = ghost_get(vm, c);
+        ghost_put(vm, a, y);
+        ghost_put(vm, c, x);
+      } else if (step == 2) {
+        VM1_LINK(c, b);
+        interval_record x = ghost_get(vm, c), y = ghost_get(vm, b);
+        ghost_put(vm, c, y);
+        ghost_put(vm, b, x);
+      } else {
+        VM1_LINK(a, a);
+        interval_put(vm, a, interval_union(interval_get(vm, a), ghost_get(vm, a)));
+        ghost_put(vm, a, empty_interval());
+        VM1_LINK(c, b);
+        ghost_put(vm, b, interval_union(ghost_get(vm, b), ghost_get(vm, c)));
+        ghost_put(vm, c, empty_interval());
+      }
+    }
   }
 }
 
-STATIC int seed_interval(machine *vm1, idx base_word, bit source)
+STATIC void stage1_init(machine *vm)
 {
-  if (!vm1)
-    return 0;
-  idx dst_low = read_word(vm1, base_word);
-  idx dst_high = read_word(vm1, base_word + 1);
-  idx src_low = read_word(vm1, base_word + 2);
-  idx src_high = read_word(vm1, base_word + 3);
-  if (src_low == src_high)
-    return 0;
-  for (idx i = 0; i < SPACE_SIZE; i++)
-    vm1->subspace[i].active = 0;
-  vm1->subspace[0].key.low = source ? src_low : dst_low;
-  vm1->subspace[0].key.high = source ? src_high : dst_high;
-  vm1->subspace[0].key.partner = source ? dst_low : src_low;
-  vm1->subspace[0].value = source;
-  vm1->subspace[0].active = 1;
-  mark_pos(vm1, 0);
-  return 1;
-}
-
-STATIC void stage1_init(machine *vm1)
-{
-  if (!vm1)
+  if (!vm)
     return;
-  sync_space_and_subspace(vm1);
-  reset_stage1_state(vm1);
+  VM1_LAYER("cycle-boundary");
+  sync_space_and_subspace(vm);
+  VM1_LAYER("mark-reset");
+  reset_stage1_state(vm);
+}
+STATIC void sort_intervals(machine *vm)
+{
+  for (size_t l = 0; l < vm->fabric.count; l++) {
+    VM1_LAYER("descriptor-sort");
+    for (size_t p = 0; p < vm->fabric.layers[l].count; p++) {
+      pair edge = vm->fabric.layers[l].pairs[p];
+      interval_sort_pair(vm, edge.a, edge.b);
+    }
+  }
 }
 
-STATIC void copy_pos(machine *vm1, idx dst, idx src)
-{
-  vm1->subspace[dst].key.low = vm1->subspace[src].key.low;
-  vm1->subspace[dst].key.high = vm1->subspace[src].key.high;
-  vm1->subspace[dst].key.partner = vm1->subspace[src].key.partner;
-  vm1->subspace[dst].value = vm1->subspace[src].value;
-  vm1->subspace[dst].active = 1;
-  mark_pos(vm1, dst);
-}
+STATIC void distribute_intervals(machine *vm);
 
-/* Every active token in this pass describes the same interval. Replication
- * cannot overwrite another pending request or a positional classification. */
-STATIC void stage1_pair(machine *vm1, idx a, idx b)
+STATIC void seed_intervals_from_program(machine *vm)
 {
-  if (!vm1)
+  if (!vm)
     return;
-  if (vm1->subspace[a].active && !vm1->subspace[b].active)
-    copy_pos(vm1, b, a);
-  else if (vm1->subspace[b].active && !vm1->subspace[a].active)
-    copy_pos(vm1, a, b);
+  VM1_LAYER("descriptor-seed");
+  for (idx i = 0; i < SPACE_SIZE; i++) {
+    interval_record r = empty_interval();
+    /* i is a fixed decoder-cell index, never a computed owner address. */
+    if (i < (program_word_limit(vm) / 4) * 2) {
+      idx base = (idx)((i / 2) * 4);
+      idx sl = read_word(vm, base + 2), sh = read_word(vm, base + 3);
+      if (sl != sh) {
+        idx dl = read_word(vm, base), dh = read_word(vm, base + 1);
+        r = i & 1u ? (interval_record){sl, sh, dl, 1}
+                   : (interval_record){dl, dh, sl, 0};
+      }
+    }
+    interval_put(vm, i, r);
+    vm->subspace[i].key.sort = 0;
+  }
+  sort_intervals(vm);
+  distribute_intervals(vm);
+}
+
+STATIC void distribute_intervals(machine *vm)
+{
+  size_t padded = interval_padded_size(), half = padded / 2;
+  size_t inputs = (program_word_limit(vm) / 4) * 2;
+  int ghosts_possible = 0;
+  for (size_t d = half; d; d /= 2) {
+    VM1_LAYER("split-real");
+    for (size_t a = 0; a + d < SPACE_SIZE; a++) {
+      if (a & d)
+        continue;
+      idx split = (idx)((a & ~(2 * d - 1)) + d);
+      interval_split_pair(vm, (idx)a, (idx)(a + d), split, 0);
+    }
+    /* All active paths retain the unprocessed input suffix. No ghost can
+     * first appear unless N mod d is a nonzero suffix smaller than inputs. */
+    if (SPACE_SIZE % d && SPACE_SIZE % d < inputs)
+      ghosts_possible = 1;
+    if (ghosts_possible) {
+      int cross = 0, internal = 0;
+      for (size_t g = SPACE_SIZE; g < padded; g++) {
+        if (g & d) {
+          if (g - d < SPACE_SIZE)
+            cross = 1;
+          else
+            internal = 1;
+        }
+      }
+      if (internal) {
+        VM1_LAYER("split-ghost");
+        for (size_t g = SPACE_SIZE; g + d < padded; g++)
+          if (!(g & d)) {
+            idx split = (idx)((g & ~(2 * d - 1)) + d);
+            interval_split_pair(vm, (idx)(g - half), (idx)(g + d - half), split, 1);
+          }
+      }
+      if (cross)
+        split_crossing_pairs(vm, padded, d);
+      if (!(SPACE_SIZE % d))
+        ghosts_possible = 0;
+    }
+  }
+  VM1_LAYER("mark-finish");
+  for (idx i = 0; i < SPACE_SIZE; i++) {
+    interval_record r = interval_get(vm, i);
+    vm->subspace[i].key.sort = inside_half_open(i, r.low, r.high) ? r.paired : i;
+    vm->subspace[i].role = (bit)(inside_half_open(i, r.low, r.high) && r.source);
+    vm->subspace[i].key.origin = i;
+  }
 }
 
 /* ---------- addressing: stage2 ---------- */
@@ -469,6 +673,7 @@ STATIC void stage2_init(machine *vm1)
   if (!vm1) {
     return;
   }
+  VM1_LAYER("transpose-init");
   for (idx i = 0; i < SPACE_SIZE; i++) {
     vm1->subspace[i].key.partner = vm1->subspace[i].key.origin;
     vm1->subspace[i].value = GETBIT(vm1->space[i / CHAR_BIT], i % CHAR_BIT);
@@ -541,23 +746,12 @@ STATIC void run_network(machine *vm1, void (*pair_op)(machine *, idx, idx))
   if (!vm1 || !pair_op) {
     return;
   }
-  for (size_t l = 0; l < vm1->fabric.count; l++)
+  for (size_t l = 0; l < vm1->fabric.count; l++) {
+    VM1_LAYER("network");
     for (size_t p = 0; p < vm1->fabric.layers[l].count; p++) {
-      pair_op(vm1, vm1->fabric.layers[l].pairs[p].a, vm1->fabric.layers[l].pairs[p].b);
-    }
-}
-
-/* All descriptor reads precede data movement. A phase-1 pass is issued for
- * each nonempty interval, reusing the same network and per-position cells. */
-STATIC void seed_intervals_from_program(machine *vm1)
-{
-  if (!vm1)
-    return;
-  idx words = program_word_limit(vm1);
-  for (idx base = 0; base + EDGES * WAYS <= words; base += EDGES * WAYS) {
-    for (bit source = 0; source < EDGES; source++) {
-      if (seed_interval(vm1, base, source))
-        run_network(vm1, stage1_pair);
+      idx a = vm1->fabric.layers[l].pairs[p].a, b = vm1->fabric.layers[l].pairs[p].b;
+      VM1_LINK(a, b);
+      pair_op(vm1, a, b);
     }
   }
 }

@@ -131,10 +131,36 @@ static void run_case(machine *vm, const copy *ops, unsigned count, const char *n
   check_tick(vm, ops, count, name);
 }
 
+static int finish(machine *vm)
+{
+  network_free(&vm->fabric);
+  free(vm);
+  printf("addressing oracle (%u positions): %u cases, %u failures\n", (unsigned)SPACE_SIZE, cases,
+         failures);
+  return failures != 0;
+}
+
+#ifndef LEGACY_OPEN
+static void check_three_phase_regressions(machine *vm)
+{
+  /* Two legal singleton instructions whose descriptors compete on intermediate
+   * links. A repaired one-pass marker must handle both slot orders/directions.
+   * Keep these data positions outside the processor in each test build. */
+  unsigned base = SPACE_SIZE >= 4096 ? 8192 : 128;
+  copy ops[] = {{1, base, base + 2}, {1, base + 1, base + 4}};
+  run_case(vm, ops, 2, "one-pass descriptor collision");
+  copy reverse_slots[] = {ops[1], ops[0]};
+  run_case(vm, reverse_slots, 2, "one-pass collision reversed slots");
+  copy reverse_copies[] = {{1, base + 2, base}, {1, base + 4, base + 1}};
+  run_case(vm, reverse_copies, 2, "one-pass collision reversed copies");
+}
+#endif
+
 int main(int argc, char **argv)
 {
   (void)allocate_machine; /* Included engine entry point is tested elsewhere. */
-  if (argc != 2)
+  int regressions_only = argc == 3 && !strcmp(argv[2], "--three-phase-regressions");
+  if (argc != 2 && !regressions_only)
     return 2;
   machine *vm = calloc(1, sizeof *vm);
   if (!vm)
@@ -165,20 +191,9 @@ int main(int argc, char **argv)
   }
 #endif
 #ifndef LEGACY_OPEN
-  /* Sorting correctness alone does not imply this phase-1 routing property. */
-  prepare(vm);
-  install(vm, 0, (copy){1, SPACE_SIZE - 1, 0});
-  stage1_init(vm);
-  (void)seed_interval(vm, 0, 0);
-  run_network(vm, stage1_pair);
-  for (unsigned i = 0; i < SPACE_SIZE; i++) {
-    if (!vm->subspace[i].active) {
-      fprintf(stderr, "FAIL: broadcast did not reach position %u\n", i);
-      network_free(&vm->fabric);
-      free(vm);
-      return 1;
-    }
-  }
+  check_three_phase_regressions(vm);
+  if (regressions_only)
+    return finish(vm);
 #endif
 #ifdef LEGACY_OPEN
   copy regression = {1, 16385, 8192};
@@ -239,9 +254,48 @@ int main(int argc, char **argv)
       ops[i] = (copy){7, 8192 + 8 * i, 32768 + 8 * (PROCESSOR_N - 1 - i)};
     }
     run_case(vm, ops, PROCESSOR_N, "all processor slots active");
+    /* Tail paths may pass through absent padded wires before returning to a
+     * real position. These copies force both directions and dense fan-out. */
+    for (unsigned i = 0; i < PROCESSOR_N; i++)
+      ops[i] = (copy){7, 8192 + 8 * i, SPACE_SIZE - 8 * PROCESSOR_N + 8 * i};
+    run_case(vm, ops, PROCESSOR_N, "all slots read from incomplete network tail");
+    for (unsigned i = 0; i < PROCESSOR_N; i++) {
+      unsigned t = ops[i].dst;
+      ops[i].dst = ops[i].src;
+      ops[i].src = t;
+    }
+    run_case(vm, ops, PROCESSOR_N, "all slots write to incomplete network tail");
+    check_tick(vm, ops, PROCESSOR_N, "repeated cycle after ghost routing");
+    if (PROCESSOR_N >= 9) {
+      copy tail[9];
+      for (unsigned i = 0; i < 8; i++)
+        tail[i] = (copy){1, 8192 + i, 8201 + i};
+      tail[8] = (copy){1, 8200, SPACE_SIZE - 1};
+      run_case(vm, tail, 9, "eighteenth descriptor reaches final position");
+    }
+    /* Restore the original fixture for the following repeated-cycle oracle. */
+    for (unsigned i = 0; i < PROCESSOR_N; i++)
+      ops[i] = (copy){7, 8192 + 8 * i, 32768 + 8 * (PROCESSOR_N - 1 - i)};
+    run_case(vm, ops, PROCESSOR_N, "full processor before repeated cycles");
     /* The marked state and scratch token must not leak between cycles. */
     for (unsigned i = 0; i < 3; i++)
       check_tick(vm, ops, PROCESSOR_N, "repeated full processor cycle");
+    /* Scatter random valid copies across slots, interleaving NOPs. Neither
+     * physical interval order nor descriptor ID order may affect execution. */
+    for (unsigned trial = 0; trial < 24; trial++) {
+      prepare(vm);
+      unsigned count = 0;
+      for (unsigned slot = 0; slot < PROCESSOR_N; slot++) {
+        if (random_word() & 1)
+          continue;
+        unsigned n = 1 + random_word() % 15;
+        unsigned a = 8192 + slot * 32;
+        unsigned b = 32768 + (PROCESSOR_N - 1 - slot) * 32;
+        ops[count] = random_word() & 1 ? (copy){n, a, b} : (copy){n, b, a};
+        install(vm, slot, ops[count++]);
+      }
+      check_tick(vm, ops, count, "random sparse slots and directions");
+    }
     /* Physical byte/word boundaries and arbitrary interval lengths. */
     for (unsigned n = 1; n <= 127; n++) {
       copy c = {n, 8192 + (n % 17), 32768 + (n % 23)};
@@ -258,9 +312,5 @@ int main(int argc, char **argv)
   check_tick(vm, &installer, 1, "self-modification install tick");
   check_tick(vm, &next, 1, "self-modification following tick");
 #endif
-  network_free(&vm->fabric);
-  free(vm);
-  printf("addressing oracle (%u positions): %u cases, %u failures\n", (unsigned)SPACE_SIZE, cases,
-         failures);
-  return failures != 0;
+  return finish(vm);
 }

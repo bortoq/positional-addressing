@@ -31,3 +31,14 @@ tmp-*
 tests/test_addressing
 tests/test_addressing_small
 tests/sorter-small.txt
+
+# parallel addressing checks
+tests/test_parallel
+tests/test_parallel_small
+tests/test_parallel_irregular
+tests/sorter-irregular.txt
+tests/test_addressing_irregular
+
+# generated incomplete-network shape checks
+tests/test_parallel_shape
+tests/sorter-shape.txt

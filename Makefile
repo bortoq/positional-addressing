@@ -26,6 +26,9 @@ TEST_LOADER_BIN = tests/test_loader
 TEST_COMPILE_BIN = tests/test_compile
 TEST_ADDRESS_BIN = tests/test_addressing
 TEST_ADDRESS_SMALL_BIN = tests/test_addressing_small
+TEST_ADDRESS_IRREGULAR_BIN = tests/test_addressing_irregular
+PARALLEL_BINS = tests/test_parallel tests/test_parallel_small tests/test_parallel_irregular
+IRREGULAR_SORTER = tests/sorter-irregular.txt
 SMALL_SORTER = tests/sorter-small.txt
 SORTER    = sorter.txt
 
@@ -35,7 +38,7 @@ all: $(VM1_BIN) $(SORT_BIN) tools
 
 tools: $(MKLDR1_BIN) $(C3_BIN)
 
-tests: $(TEST_SORT_BIN) $(TEST_COMPAT_BIN) $(TEST_MACHINE_BIN) $(TEST_NETUNIT_BIN) $(TEST_LOADER_BIN) $(TEST_COMPILE_BIN) $(TEST_ADDRESS_BIN) $(TEST_ADDRESS_SMALL_BIN)
+tests: $(TEST_SORT_BIN) $(TEST_COMPAT_BIN) $(TEST_MACHINE_BIN) $(TEST_NETUNIT_BIN) $(TEST_LOADER_BIN) $(TEST_COMPILE_BIN) $(TEST_ADDRESS_BIN) $(TEST_ADDRESS_SMALL_BIN) $(TEST_ADDRESS_IRREGULAR_BIN) $(PARALLEL_BINS)
 
 $(VM1_BIN): $(VM1_SRC) $(SRC_DIR)/machine.h $(SRC_DIR)/loader.h
 	$(CC) $(CFLAGS) $(VM1_SRC) -o $@
@@ -73,12 +76,35 @@ $(TEST_ADDRESS_BIN): tests/test_addressing.c $(VM1_SRC) $(SRC_DIR)/machine.h $(S
 $(TEST_ADDRESS_SMALL_BIN): tests/test_addressing.c $(VM1_SRC) $(SRC_DIR)/machine.h $(SRC_DIR)/loader.h
 	$(CC) $(CFLAGS) -DSPACE_SIZE=256 -DPROCESSOR_N=2 tests/test_addressing.c -o $@
 
+$(TEST_ADDRESS_IRREGULAR_BIN): tests/test_addressing.c $(VM1_SRC) $(SRC_DIR)/machine.h $(SRC_DIR)/loader.h
+	$(CC) $(CFLAGS) -DSPACE_SIZE=240 -DPROCESSOR_N=2 $< -o $@
+
+tests/test_parallel: tests/test_parallel.c $(VM1_SRC) $(SRC_DIR)/machine.h $(SRC_DIR)/loader.h
+	$(CC) $(CFLAGS) $< -o $@
+
+tests/test_parallel_small: tests/test_parallel.c $(VM1_SRC) $(SRC_DIR)/machine.h $(SRC_DIR)/loader.h
+	$(CC) $(CFLAGS) -DSPACE_SIZE=256 -DPROCESSOR_N=2 $< -o $@
+
+tests/test_parallel_irregular: tests/test_parallel.c $(VM1_SRC) $(SRC_DIR)/machine.h $(SRC_DIR)/loader.h
+	$(CC) $(CFLAGS) -DSPACE_SIZE=240 -DPROCESSOR_N=2 $< -o $@
+
+$(IRREGULAR_SORTER): $(SORT_BIN)
+	./$(SORT_BIN) 240 > $@
+
+.PHONY: check-parallel
+check-parallel: $(PARALLEL_BINS) $(SORTER) $(SMALL_SORTER) $(IRREGULAR_SORTER)
+	./tests/test_parallel_small $(SMALL_SORTER)
+	./tests/test_parallel_irregular $(IRREGULAR_SORTER)
+	./tests/test_parallel $(SORTER)
+	$(MAKE) check-parallel-shapes
+
 $(SMALL_SORTER): $(SORT_BIN)
 	./$(SORT_BIN) 256 > $@
 
 .PHONY: check-addressing
-check-addressing: $(TEST_ADDRESS_BIN) $(TEST_ADDRESS_SMALL_BIN) $(SORTER) $(SMALL_SORTER)
+check-addressing: $(TEST_ADDRESS_BIN) $(TEST_ADDRESS_SMALL_BIN) $(TEST_ADDRESS_IRREGULAR_BIN) $(SORTER) $(SMALL_SORTER) $(IRREGULAR_SORTER)
 	@status=0; ./$(TEST_ADDRESS_SMALL_BIN) $(SMALL_SORTER) || status=1; \
+	./$(TEST_ADDRESS_IRREGULAR_BIN) $(IRREGULAR_SORTER) || status=1; \
 	./$(TEST_ADDRESS_BIN) $(SORTER) || status=1; exit $$status
 
 # Generate default sorting network
@@ -103,11 +129,13 @@ check: all $(SORTER) $(SMALL_SORTER) tests
 	./$(TEST_COMPAT_BIN)
 	@echo "== independent simultaneous-copy oracle =="
 	$(MAKE) check-addressing
+	$(MAKE) check-parallel
 
 test: check
 
 clean:
-	rm -f $(VM1_BIN) $(SORT_BIN) $(SORTER) $(MKLDR1_BIN) $(C3_BIN) $(TEST_SORT_BIN) $(TEST_COMPAT_BIN) $(TEST_MACHINE_BIN) $(TEST_NETUNIT_BIN) $(TEST_LOADER_BIN) $(TEST_COMPILE_BIN) $(TEST_ADDRESS_BIN) $(TEST_ADDRESS_SMALL_BIN)
+	rm -f $(VM1_BIN) $(SORT_BIN) $(SORTER) $(MKLDR1_BIN) $(C3_BIN) $(TEST_SORT_BIN) $(TEST_COMPAT_BIN) $(TEST_MACHINE_BIN) $(TEST_NETUNIT_BIN) $(TEST_LOADER_BIN) $(TEST_COMPILE_BIN) $(TEST_ADDRESS_BIN) $(TEST_ADDRESS_SMALL_BIN) $(TEST_ADDRESS_IRREGULAR_BIN)
+	rm -f $(PARALLEL_BINS) $(IRREGULAR_SORTER) tests/test_parallel_shape tests/sorter-shape.txt
 	rm -f $(SMALL_SORTER)
 	rm -f tmp_* tmp-*
 
@@ -120,3 +148,12 @@ help:
 	@echo "  check   - run C tests"
 	@echo "  clean   - remove build artifacts"
 	@echo "  help    - this message"
+
+# Cover a large padding gap, a top-level local ghost pair and a partial tail.
+.PHONY: check-parallel-shapes
+check-parallel-shapes: $(SORT_BIN)
+	@set -e; for n in 1040 32784 60000; do \
+	  $(CC) $(CFLAGS) -DSPACE_SIZE=$$n -DPROCESSOR_N=128 tests/test_parallel.c -o tests/test_parallel_shape; \
+	  ./$(SORT_BIN) $$n > tests/sorter-shape.txt; \
+	  ./tests/test_parallel_shape tests/sorter-shape.txt; \
+	done

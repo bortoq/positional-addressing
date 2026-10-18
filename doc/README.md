@@ -23,7 +23,7 @@ These are program obligations, not new mandatory hardware validation circuits.
 Memory is `[0,SPACE_SIZE)`. Position zero is addressable. The exclusive end
 must fit the existing index: 65520 fits 16 bits; 65536 does not. The network
 generator may still test a 65536-wire sorting network independently of vm1.
-Processor words start at zero, up to `PROCESSOR_N` four-word slots. Copies
+Processor words start at zero, up to `PROCESSOR_N` four-word slots (1–128). Copies
 may rewrite them, with the new instructions taking effect on the next cycle.
 All instruction reads occur during phase 1, before any new data is committed.
 
@@ -51,54 +51,150 @@ consistently transporting the associated ownership bits. Independent tests
 found lost copies and corruption of source and unrelated positions before
 the change of interval format.
 
-The corrected first phase broadcasts descriptors one at a time, retaining
-position classifications separately from moving descriptor state. The second
-phase swaps complete records. This uses the existing position cells and
-network repeatedly. The project owner explicitly accepted extra work within
-phase 1 without adding position cells on 2026-10-18. Three phases now mean
-three algorithmic stages, not exactly three passes through the network.
+The first repair broadcast descriptors sequentially. It passed the functional
+oracle but required `2K+2` passes for K copies, violating the parallel-depth
+goal. Descriptor sorting and monotone interval splitting now replace that repair;
+the corrected second and third phases remain. The owner accepted additional
+work within phase 1 without new position cells on 2026-10-18. Three phases
+mean algorithmic stages, rather than three network passes or FPGA clocks.
 
 ## The three phases
 
-Each position has `value`, `active`, `role` and five key words
-`{low, high, partner, sort, origin}`. `origin` stays fixed.
+Each position retains `value`, `active`, `role` and five 16-bit key words
+`{low,high,partner,sort,origin}`. There are no extra persistent packet arrays.
 
-1. **Classify.** Commit the preceding cycle at the boundary, clear `role`
-   and initialize `sort=origin`. For each non-NOP instruction, broadcast its
-   destination descriptor and then its source descriptor, one per network
-   pass. Clear only `active` between broadcasts. The broadcast carries
-   `low/high/partner` and uses `value` as its direction bit; actual memory
-   data remains in `space`. When a position first receives the token, test
-   `low <= origin < high`. Matching positions retain `sort=partner` and
-   `role=source`; later broadcasts leave these marks intact because valid
-   ranges are disjoint. Broadcasts never perform ordinary data copies.
-2. **Transpose.** Load actual bits from `space` into `value`, and set
-   `partner=origin`. Sort by `sort`, swapping `sort`, `partner`, `value` and
-   `role` together. Equal-length paired intervals exchange groups; gaps keep
-   their rank. The transported source flag now marks destination writes.
-3. **Restore order.** For a writing group with equal `sort` keys, compare
-   transported `partner` origins and swap origins with bit values as needed.
-   Different groups already have ordered primary keys and never exchange
-   records. Non-writing groups need no repair because they are not committed.
+| State | Phase 1 | Phase 2 / 3 |
+|---|---|---|
+| `low,high,partner` | Primary interval bounds and paired lower bound | Scratch bounds, moving source origin |
+| `value,active` | Primary source flag and nonempty flag | Actual bit and scratch flag |
+| `sort,origin,role` | Packed ghost bounds, ghost paired bound, ghost source flag | Group key, physical index, destination write flag |
 
-At the following cycle boundary, only records with `role=1` write memory.
-Original sources and unrelated bits remain in `space`; no full-space host
-copy routine substitutes for network addressing. The legacy channel loop
-observes this same boundary, so its direct echo retains one-cycle latency.
+1. **Classify.** Commit the previous result. Each slot independently reads
+   its four fixed input words into two descriptors: destination at cell 2s,
+   source at cell 2s+1. Empty descriptors have both bounds N; source NOP
+   disables both descriptors regardless of destination words. Sort all N
+   primary records by lower bound in one pass of the existing fabric.
+   Active records now form a consecutive prefix in increasing interval order.
+   Split them through a descending-dimension butterfly. A node at fixed
+   boundary m sends `[low,min(high,m))` left and `[max(low,m),high)` right,
+   discarding empty branches. Original paired boundaries and source flags
+   are retained. Final nonempty primary records belong to their own physical
+   positions; assign their paired lower bounds as `sort`, otherwise `sort=i`.
+   Restore `origin=i`. Actual data stays in packed `space` throughout phase 1.
+2. **Transpose.** Load bits from `space`, set `partner=origin`, then sort
+   `sort,partner,value,role` as a complete record. Equal-length paired ranges
+   exchange groups; other positions retain their rank. Source roles become
+   destination write roles.
+3. **Restore order.** Within each writing group with equal `sort`, sort by
+   transported source origin, carrying the bit. Different groups do not
+   exchange records. This phase remains necessary for the nonstable fabric.
 
-For K non-NOP instructions, classification takes `2K` network passes, and
-transpose/restore take two more: `2K+2` passes, plus initialization and sync.
-This deliberately trades time and switching activity for cell reuse. Empty
-slots do not issue broadcasts. No per-position fields, extra address bits,
-duplicate networks or per-comparator history bits were added.
+Only writing roles commit at the next boundary. Processor modifications
+therefore affect the following cycle. The existing channel boundary is unchanged.
+
+## Coverage and collision freedom
+
+The relevant broadcast-banyan property is: concentrated active inputs and
+monotone disjoint output sets admit conflict-free interval splitting. See
+[Tony T. Lee, Nonblocking Copy Networks, sections 3 and 7](https://uspto.report/patent/grant/4813038).
+Initial descriptor sorting supplies both conditions; pairwise nonintersection
+alone would not supply the required input order or concentration.
+
+At each butterfly stage a record is responsible for the intersection of its
+original half-open interval with the output block identified by its processed
+address prefix. Splitting partitions this responsibility into disjoint pieces
+whose union is the original responsibility. The banyan property ensures that
+at most one input has a nonempty contribution to each output. `interval_union`
+checks this invariant in the C model. After all a dimensions, blocks are
+singletons, so every covered position receives exactly its interval's metadata,
+and gaps receive none. No stable sort or arithmetic translation of addresses
+is needed; ordering by original source position is handled in phase 3.
+
+## Missing wires without new position storage
+
+Let P be the next power of two, H=P/2, and q the configured maximum number
+of descriptor inputs (`q<=256`, from at most 128 instruction slots). N may
+be smaller than P. Simply deleting padded butterfly wires loses valid paths,
+even though their final destinations are below N. For example, concentrated
+inputs 0..17 addressing singleton outputs 0..16 and N-1 lose the last output
+under naive truncation at N=65520.
+
+A live path preserves the unprocessed suffix of its original input rank
+r<q. If its current wire is at or above N while its destination is below N,
+its destination block crosses the N boundary and its residual tail length
+is less than q. Thus every live missing-wire record's bounds lie in
+`[B,N)`, B=`N & ~255`, of length at most 240 (N is a multiple of 16).
+Both endpoints can be represented by their low eight bits, with high bits
+supplied by the fixed B wires. Zero encodes an empty record. No subtraction
+of a program address, extra address bit or stored arithmetic result is needed.
+`ghost_put` verifies the bound invariant. If N is a multiple of 256, no live
+ghost record can occur with q<=256.
+
+Missing logical wire g is represented in existing cell b=g-H:
+`sort` stores the two endpoint bytes, `origin` the paired lower bound, and
+`role` the source flag. Its primary descriptor uses the other three words and
+two flags. Data remains in `space`, so these fields are available.
+
+Three cases execute a butterfly stage:
+
+- Real/real: process primary records on the existing dimension-d link.
+- Ghost/ghost: process packed records on the mirrored dimension-d link.
+- Real a / ghost g=a+d: use cells A=a, B=g-H, C=a-H. For d<H,
+  `C < N-H <= B < H <= A < N`; different triples are disjoint. Links C–B
+  (length d) and C–A (length H) already exist. Spare packed fields in A and C
+  stage the operation, while the primary records in B and C remain intact.
+  At d=H the real and ghost records share one cell and are processed locally.
+
+The cross-pair operation takes five disjoint sublayers. First keep the primary
+left branch, place its right branch U in spare A, retain the ghost left W in
+B and put its right V in C. Swap spare A/C, then C/B, then A/C. This leaves
+W in A, U in B, V in C. Finally merge the two left contributions in A and the
+two right contributions in B, and clear spare A/C. Collision freedom permits
+each merge. Each packet fits its assigned fields; local variables in C denote
+combinational pair inputs/outputs, not additional persistent registers.
+
+Ghost handling begins only when `0 < N mod d < q` can first make one reachable.
+After a dimension for which `N mod d == 0`, all active paths are real again.
+These decisions use configuration/wire constants, never active-copy count K.
+All origin fields are restored before phase 2. The logical padding therefore
+adds neither memory positions nor physical links.
+
+## Exact depth
+
+Let L be the loaded sorting-network depth, a=`ceil(log2 N)`. Let G be the
+number of scheduled ghost/ghost layers, C the number of cross-pair dimensions
+below H, and T the number (0 or 1) of top-dimension local cross layers.
+The exact instrumented depth is
+
+```
+D = 3L + a + G + 5C + T + 5 <= 3L + 7a + 5 = O(log² N).
+```
+
+The five local steps are boundary commit, reset, decoder seeding (including
+clearing ghost fields), final classification and payload loading. The no-op
+phase-3 initialization is not counted. All schedules depend on N and the
+configured slot capacity, but not on active instruction count K.
+
+For N=65520 and 128 slots: L=136, a=16, G=T=0, C=5 (d=256,128,64,32,16):
+
+```
+3*136 + 16 + 5*5 = 449 network layers
+449 + 5 = 454 total scheduled steps
+```
+
+N=240/256 with two slots uses `3*36+8+5=121` steps. This replaces the earlier
+`20L+30a+34=3234`-step collective-join implementation. There are now three
+full sorting passes plus butterfly/scratch layers. Exactly three full passes
+without any additional layers has not been achieved. Word-level layer depth
+is not a claim about FPGA clocks or transistor gate depth.
 
 ## Network and loading
 
 `src/network.c` constructs a pairwise network on the next power of two,
 filters out-of-space pairs and packs remaining links by wire readiness.
-The generated network provides both the sorting property and root-zero
-broadcast coverage used above. An arbitrary substitute network must satisfy
-both properties; sorting alone is not a certification of phase 1.
+The classifier requires its sorting property and existing butterfly links
+between indices differing in one bit. An arbitrary sorting network is not automatically
+a compatible replacement.
 
 `sorter.txt` contains `a b` pairs with `a<b`. A hardware layer cannot use a
 wire twice. The loader reconstructs layers while preserving pair order;
@@ -119,7 +215,10 @@ must define a separate contract instead of relying on addressing-phase order.
 ## Verification and hardware
 
 `make check` runs all units, sorting checks, exact channel echo and an
-independent snapshot-based simultaneous-copy oracle on 256 and 65520 positions.
+independent snapshot-based simultaneous-copy oracle on 240, 256 and 65520 positions.
+`make check-parallel` checks classification, existing-link membership, disjoint
+sublayers and K-independent schedules. It covers 240, 256, 1040, 32784, 60000
+and 65520 positions, including dense tail destinations and random intervals.
 The oracle checks every bit, including sources, untouched memory and processor
 self-modification. See [the audit](audit.md) for results and reproduction.
 [Hardware notes](hardware.md) distinguish unchanged state-cell counts from

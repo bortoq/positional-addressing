@@ -42,12 +42,13 @@ _Static_assert(SPACE_SIZE % 16 == 0, "space must contain whole idx words");
 /* ceil(log2(n)) for n>0 — used for INDEX_SIZE / LAYER_N estimates */
 static inline int ceil_log2_u32(uint32_t n)
 {
-  if (n <= 1) return 0;
+  if (n <= 1)
+    return 0;
   return 32 - __builtin_clz(n - 1);
 }
 #define CEIL_LOG2(N) ceil_log2_u32((uint32_t)(N))
 
-#define INDEX_SIZE CEIL_LOG2(SPACE_SIZE) /* bits per index */
+#define INDEX_SIZE CEIL_LOG2(SPACE_SIZE)                                  /* bits per index */
 #define LAYER_N (CEIL_LOG2(SPACE_SIZE) * (CEIL_LOG2(SPACE_SIZE) + 1) / 2) /* max layers */
 #define SPACE_WORDS (SPACE_SIZE / CHAR_BIT / (int)sizeof(idx))
 #define SPACE_BYTES (SPACE_SIZE / CHAR_BIT)
@@ -68,7 +69,10 @@ static inline int ceil_log2_u32(uint32_t n)
 #define GETBIT(SRC, OFF) (1u & ((SRC) >> (OFF)))
 static inline void set_bit_u8(uint8_t *dst, unsigned off, unsigned src)
 {
-  if (src) *dst |= (uint8_t)(1u << off); else *dst &= (uint8_t) ~(1u << off);
+  if (src)
+    *dst |= (uint8_t)(1u << off);
+  else
+    *dst &= (uint8_t)~(1u << off);
 }
 #define SETBIT(DST, OFF, SRC) set_bit_u8(&(DST), (OFF), (SRC))
 
@@ -83,8 +87,8 @@ static inline void set_bit_u8(uint8_t *dst, unsigned off, unsigned src)
 
 /* --- types --- */
 
-typedef uint8_t bit; /* 0/1 */
-typedef bit data; /* bit in space */
+typedef uint8_t bit;  /* 0/1 */
+typedef bit data;     /* bit in space */
 typedef uint16_t idx; /* position index (fits SPACE_SIZE) */
 
 typedef struct {
@@ -103,19 +107,19 @@ typedef struct { /* full network */
 
 /* addressing key per position — see doc/README.md */
 typedef struct {
-  idx low; /* interval low (included) */
-  idx high; /* interval high (excluded) */
-  idx partner; /* stage1: paired lower bound; stage2/3: transported source origin */
-  idx sort; /* target group key, retained through stage3 */
-  idx origin; /* fixed position id */
+  idx low;     /* stage1 primary interval lower bound */
+  idx high;    /* stage1 primary interval exclusive upper bound */
+  idx partner; /* stage1 paired lower bound; stage2/3 transported source origin */
+  idx sort;    /* stage1 packed ghost bounds, then target group key */
+  idx origin;  /* stage1 ghost paired bound; restored physical ID for stage2/3 */
 } position_key;
 
 typedef struct {
   data space[SPACE_SIZE / CHAR_BIT]; /* packed bits */
   struct {
-    data value; /* stage1: token direction; stage2/3: actual bit payload */
-    bit active; /* stage1: this position has the current broadcast token */
-    bit role; /* stage1: source position; after stage2: destination to commit */
+    data value; /* stage1 primary source flag; stage2/3 actual bit payload */
+    bit active; /* stage1 primary interval nonempty */
+    bit role;   /* stage1 ghost source, then position source; stage2 destination to commit */
     position_key key;
   } subspace[SPACE_SIZE];
   network fabric; /* sorting network */

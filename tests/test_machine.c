@@ -335,85 +335,38 @@ static void test_sync_and_reset(void)
   CHECK(1, "reset null guard");
 }
 
-static void test_seed_interval(void)
+static void test_marking_records(void)
 {
   machine vm = {0};
   init_origin_keys(&vm);
-  write_word(&vm, 0, 10);
-  write_word(&vm, 1, 20);
-  write_word(&vm, 2, 30);
-  write_word(&vm, 3, 40);
-  CHECK(seed_interval(&vm, 0, 0) == 1, "seed destination token");
-  CHECK(vm.subspace[0].active && vm.subspace[0].key.low == 10 && vm.subspace[0].key.high == 20 &&
-            vm.subspace[0].key.partner == 30 && vm.subspace[0].value == 0,
-        "destination token bounds and direction");
-  vm.subspace[50].active = 1;
-  vm.subspace[12].role = 1;
-  vm.subspace[12].key.sort = 77;
-  CHECK(seed_interval(&vm, 0, 1) == 1 && vm.subspace[0].key.low == 30 &&
-            vm.subspace[0].key.partner == 10 && vm.subspace[0].value == 1,
-        "seed source token");
-  CHECK(vm.subspace[50].active == 0, "new token clears broadcast flags");
-  CHECK(vm.subspace[12].role == 1 && vm.subspace[12].key.sort == 77,
-        "new token preserves prior classifications");
-  write_word(&vm, 3, 30);
-  CHECK(seed_interval(&vm, 0, 1) == 0, "empty instruction does not issue token");
-  CHECK(seed_interval(NULL, 0, 0) == 0, "seed null guard");
-  write_word(&vm, 0, 0);
-  write_word(&vm, 1, 1);
-  write_word(&vm, 2, 7);
-  write_word(&vm, 3, 8);
-  seed_interval(&vm, 0, 0);
-  CHECK(vm.subspace[0].key.sort == 7 && vm.subspace[0].role == 0,
-        "seed marks included position zero");
-}
-
-static void test_copy_pos(void)
-{
-  machine vm = {0};
-  init_origin_keys(&vm);
-  vm.subspace[1].key.low = 5;
-  vm.subspace[1].key.high = 7;
-  vm.subspace[1].key.partner = 33;
-  vm.subspace[1].value = 1;
-  vm.subspace[1].active = 1;
-  copy_pos(&vm, 5, 1);
-  CHECK(vm.subspace[5].key.low == 5 && vm.subspace[5].active && vm.subspace[5].value == 1,
-        "copy broadcast token");
-  CHECK(vm.subspace[5].role == 1 && vm.subspace[5].key.sort == 33,
-        "copy classifies included lower boundary");
-  CHECK(vm.subspace[1].active == 1, "broadcast retains its source token");
-  vm.subspace[7].key.sort = 90;
-  vm.subspace[7].role = 1;
-  copy_pos(&vm, 7, 1);
-  CHECK(vm.subspace[7].key.sort == 90 && vm.subspace[7].role == 1,
-        "excluded upper boundary does not overwrite another classification");
-}
-
-static void test_stage1_pair(void)
-{
-  machine vm = {0};
-  init_origin_keys(&vm);
-  reset_stage1_state(&vm);
-  vm.subspace[0].active = 1;
-  vm.subspace[0].key.low = 5;
-  vm.subspace[0].key.high = 6;
-  vm.subspace[0].key.partner = 99;
-  vm.subspace[0].value = 1;
-  stage1_pair(&vm, 0, 5);
-  CHECK(vm.subspace[0].active && vm.subspace[5].active && vm.subspace[5].role == 1 &&
-            vm.subspace[5].key.sort == 99,
-        "broadcast left to right and classify");
-  stage1_pair(&vm, 4, 5);
-  CHECK(vm.subspace[4].active && vm.subspace[4].role == 0 && vm.subspace[4].key.sort == 4,
-        "broadcast right to left without marking outside range");
-  vm.subspace[4].key.sort = 42;
-  stage1_pair(&vm, 4, 5);
-  CHECK(vm.subspace[4].key.sort == 42, "two active tokens preserve prior classification");
-  stage1_pair(&vm, 8, 9);
-  CHECK(!vm.subspace[8].active && !vm.subspace[9].active, "two inactive positions stay inactive");
-  stage1_pair(NULL, 0, 1);
-  CHECK(1, "stage1_pair null");
+  interval_record x = {10, 20, 30, 1};
+  interval_put(&vm, 5, x);
+  interval_record r = interval_get(&vm, 5);
+  CHECK(r.low == 10 && r.high == 20 && r.paired == 30 && r.source,
+        "interval record preserves metadata");
+  interval_record l = interval_left(x, 15), h = interval_right(x, 15);
+  CHECK(l.low == 10 && l.high == 15 && h.low == 15 && h.high == 20,
+        "split partitions a half-open interval without overlap");
+  CHECK(interval_left(x, 10).low == interval_left(x, 10).high,
+        "lower boundary disables left branch");
+  CHECK(interval_right(x, 20).low == interval_right(x, 20).high,
+        "upper boundary disables right branch");
+  CHECK(l.paired == 30 && h.paired == 30 && l.source && h.source,
+        "clipping retains original paired boundary and source flag");
+  interval_record tail = {SPACE_SIZE - 2, SPACE_SIZE, 7, 1};
+  ghost_put(&vm, 5, tail);
+  r = ghost_get(&vm, 5);
+  CHECK(r.low == tail.low && r.high == tail.high && r.paired == 7 && r.source,
+        "packed ghost preserves exclusive SPACE_SIZE endpoint");
+  CHECK(vm.subspace[5].key.low == 10 && vm.subspace[5].key.high == 20 &&
+            vm.subspace[5].key.partner == 30 && vm.subspace[5].value == 1,
+        "ghost does not overwrite primary interval");
+  ghost_put(&vm, 5, empty_interval());
+  r = ghost_get(&vm, 5);
+  CHECK(r.low == r.high, "ghost empty encoding");
+  CHECK(interval_union(empty_interval(), x).paired == 30 &&
+            interval_union(x, empty_interval()).paired == 30,
+        "split merge preserves sole active branch");
 }
 
 static void test_stage2(void)
@@ -472,21 +425,22 @@ static void test_run_network(void)
 {
   machine vm = {0};
   // empty network should not crash
-  run_network(&vm, stage1_pair);
+  run_network(&vm, stage2_pair);
   CHECK(1, "run_network empty");
-  run_network(NULL, stage1_pair);
+  run_network(NULL, stage2_pair);
   CHECK(1, "run_network null vm");
   run_network(&vm, NULL);
   CHECK(1, "run_network null op");
   // with one layer
   network_add_layer(&vm.fabric);
   network_push_pair(&vm.fabric, 5, 6);
-  vm.subspace[5].active = 1;
+  vm.subspace[5].key.sort = 10;
+  vm.subspace[6].key.sort = 5;
   vm.subspace[5].key.low = 4;
   vm.subspace[5].key.high = 10;
   vm.subspace[5].key.partner = 5;
-  run_network(&vm, stage1_pair);
-  CHECK(vm.subspace[6].active == 1, "run_network executes pair");
+  run_network(&vm, stage2_pair);
+  CHECK(vm.subspace[5].key.sort == 5, "run_network executes pair");
   network_free(&vm.fabric);
 }
 
@@ -644,7 +598,7 @@ static void test_seed_intervals_and_stage1_init(void)
   vm->subspace[9000].role = 1;
   vm->subspace[9000].value = 1;
   stage1_init(vm);
-  CHECK(!vm->subspace[0].active && !vm->subspace[50].active, "stage1 resets broadcast flags");
+  CHECK(!vm->subspace[0].active && !vm->subspace[50].active, "stage1 resets scratch markers");
   CHECK(vm->subspace[50].key.sort == 50 && vm->subspace[9000].role == 0,
         "stage1 resets classification");
   CHECK(GETBIT(vm->space[9000 / 8], 9000 % 8) == 1,
@@ -652,11 +606,20 @@ static void test_seed_intervals_and_stage1_init(void)
   /* No ordinary writes are allowed while descriptors are being issued. */
   unsigned char before[SPACE_BYTES];
   memcpy(before, vm->space, sizeof before);
+  FILE *f = fopen("sorter.txt", "r");
+  CHECK(f != NULL, "marking unit opens real network");
+  if (!f) {
+    free(vm);
+    return;
+  }
+  sorter_to_network(vm, f);
+  fclose(f);
   seed_intervals_from_program(vm);
   CHECK(memcmp(before, vm->space, sizeof before) == 0, "all NOP marking preserves memory");
   seed_intervals_from_program(NULL);
   stage1_init(NULL);
   CHECK(1, "marking null guards");
+  network_free(&vm->fabric);
   free(vm);
 }
 
@@ -717,14 +680,8 @@ static void test_run_cycle_and_channels(void)
 {
   machine *vm = calloc(1, sizeof *vm);
   init_origin_keys(vm);
-  network_add_layer(&vm->fabric);
-  network_push_pair(&vm->fabric, 0, 1);
-  run_cycle(vm);
-  CHECK(vm->subspace[1].key.sort == 1, "run_cycle all NOP");
   run_cycle(NULL);
   CHECK(1, "run_cycle null");
-  /* Verify the actual channel runner with the full network and installed echo. */
-  network_free(&vm->fabric);
   FILE *net = fopen("sorter.txt", "r");
   CHECK(net != NULL, "channel unit opens real sorter");
   if (!net) {
@@ -778,9 +735,7 @@ int main(void)
   test_install_loader();
   test_program_word_limit();
   test_sync_and_reset();
-  test_seed_interval();
-  test_copy_pos();
-  test_stage1_pair();
+  test_marking_records();
   test_stage2();
   test_stage3();
   test_run_network();

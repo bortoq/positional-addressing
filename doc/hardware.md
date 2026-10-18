@@ -1,93 +1,84 @@
 # Hardware notes — VM1 positional addressing
 
-`src/machine.c` is the behavioral model of three-phase addressing. It is not
-a direct C-to-HDL design. The pairwise network and state cells are reused;
-phase 1 streams descriptors rather than addressing all intervals in one pass.
-See [the algorithm and reasons for restoring phase 3](README.md).
+`src/machine.c` is a behavioral model, not synthesizable RTL. It models three
+sorting-network passes plus monotone interval splitting, using existing fields
+and connections. See the [algorithm and proofs](README.md).
 
-## State and ROM budget
+## State budget
 
-Per position, unchanged from the preceding model:
-
-```text
-value(1) + active(1) + role(1) + five 16-bit key words = 83 logical bits
+```
+value(1) + active(1) + role(1) + five 16-bit words = 83 logical bits/position
 ```
 
-For 65520 positions: 5,438,160 subspace bits plus 65,520 packed memory bits.
-`origin` is a fixed positional label; a physical implementation may wire it
-as a constant. C struct padding is not a physical cell count.
-The current generated network has **3,997,039 actual pairs**, with 136 layers.
-Blank separator lines are not comparator pairs. At two 16-bit endpoints per
-pair, a literal network ROM would hold 127,905,248 bits. The same ROM is
-reused in all passes; no copies are added for phase 3 or streamed intervals.
+For N=65520 this is 5,438,160 subspace bits plus 65,520 packed memory bits.
+The C position is 14 bytes, key 10 bytes, machine 925496 bytes excluding the
+allocated network. C padding and sizes are not physical transistor estimates.
 
-Using the old illustrative 6-transistor storage-bit convention gives
-33,022,080 transistors without ROM or 800,453,568 with literal ROM. These
-numbers cover storage only, not a synthesized controller, muxes, clocking,
-buffers or comparison logic. They correct the preceding inconsistent ROM
-pair count and are not a silicon estimate.
+Phase 1 primary records occupy low/high/partner, value/active. The actual bit
+remains in `space`. Spare sort/origin/role hold packed ghost records or temporary
+cross-pair records. Two ghost bounds occupy one 16-bit word: their common high
+byte comes from fixed configuration wires; their low bytes are stored. The
+paired boundary occupies another word and the source flag uses the third flag.
+The configured processor has 1–128 slots; its maximum 256 sorted descriptors
+is essential to the endpoint-packing proof. This limit is asserted explicitly.
 
-## Reuse across phases
+`origin` temporarily stores ghost metadata, then returns to the physical index.
+A historical optimization using a constant wire instead of an origin register
+therefore cannot be retained unchanged on the default incomplete space. The
+same caveat already applied to the preceding collective-join implementation.
 
-| Field | Classification | Transpose / restore |
-|---|---|---|
-| `low/high` | Current broadcast bounds | Available scratch words |
-| `partner` | Paired lower bound | Moving original position |
-| `sort` | Retained position/group classification | Primary group key |
-| `origin` | Fixed position label | Fixed position label |
-| `value` | One-bit descriptor direction | Actual data bit |
-| `active` | Broadcast token has arrived | Available scratch bit |
-| `role` | Position belongs to a source interval | Record must be committed |
+## Existing links and execution schedule
 
-The bit data stays in `space` until phase 2 starts, so token direction needs
-no additional state bit. Transporting a token never transports or clears an
-already retained `role/sort` classification. Phase 2 swaps complete data
-records. Phase 3 uses the already existing transported `partner` word to
-restore source order; it does not append origin to a wider comparison key.
-C swap temporaries describe old combinational inputs, not mandatory new
-register cells. Existing scratch fields are available for serialized swaps.
+Descriptor sorting and phases 2/3 traverse the loaded pairwise fabric. Butterfly
+real pairs and mirrored ghost pairs use dimension-d links already present.
+A mixed pair uses an existing dimension-H link twice and dimension-d link three
+times through a scratch cell, with local preparation/merging combined into the
+first/last sublayers. The scratch cell's primary state remains intact. Detailed
+field allocations and the five-step schedule are in the algorithm document.
+The top mixed pair, if present, is entirely local.
 
-Classification uses two boundary comparisons when a token arrives. Phase 2
-uses one strict primary-key comparison per pair. Phase 3 can use two strict
-comparisons to test group-key equality and a third to order origins. These
-operations can time-share the preceding pair-unit comparator budget instead
-of instantiating new comparison cells. A concrete mux/control implementation
-and its timing must still be designed and checked in RTL.
+Structural tests trace physical endpoint usage, not just abstract logical wires.
+They verify each cross/ghost link exists in the loaded fabric and each physical
+cell participates at most once per layer. Schedule hashes and layer counts are
+identical for K=0,1,maximum. Extra shapes cover wide padding gaps and a first-stage
+local mixed pair. A counterexample specifically exercises the last real position
+with eighteen concentrated descriptor inputs.
 
-Strict and non-strict magnitude comparison can share identical bit cells:
-from low bit to high bit, use `r_next = (A_i == B_i) ? r : A_i`; initialize
-`r=0` for `A>B`, or `r=1` for `A>=B`. This changes a constant connection,
-not a new inverter or equality comparator. It demonstrates feasibility at
-the comparator level, not unchanged transistor count for a complete datapath.
+Fixed wire indices select processor words and split boundaries. Operations on
+program endpoints are comparisons, selection/copying and fixed byte slicing /
+concatenation for packed records. No adder, subtractor, dynamic descriptor-table
+lookup, extra packet bank, sorting network per instruction or widened key is
+introduced by the algorithm. Guards that diagnose violated invariants in C are
+verification checks; they are not requirements to build extra error-detection
+circuits into each position.
 
-## Timing and energy tradeoff
+This specifies unchanged persistent fields and reuse of graph edges. It does
+not prove identical mux/control circuitry or transistor/energy costs. Local
+record temporaries in the C code describe combinational values; RTL must realize
+the listed staged moves in the existing registers.
 
-The owner explicitly accepted additional work within classification without
-new position cells (2026-10-18). For K active copies:
+## Depth and energy
 
-```text
-2K classification broadcasts + 1 transpose pass + 1 restore pass = 2K+2 passes
-```
+At the default size: 408 layers from three full passes, 16 real butterfly layers,
+25 cross-pair layers and five local steps, total 454. The previous algorithm
+needed 3234 scheduled steps. The trace visits 12,515,741 pairs/local operations
+instead of 95,665,352. These counts are independent of active K at fixed hardware
+configuration. They indicate reduced scheduled work, not measured energy.
 
-Each pass uses the same 136-layer network at the default size. There are also
-resets, descriptor injection, loading data and boundary commit operations.
-Three algorithmic phases do not mean three hardware clocks or three network
-passes. The former two-pass latency estimate is invalid. Additional passes
-increase switching activity and can increase energy and time per useful copy;
-unchanged state capacity is not an unchanged-energy claim.
+Word comparisons and selection must be implemented using the chosen comparator /
+mux timing. Packing uses fixed bit connections; it requires no stored arithmetic
+result. The five cross sublayers are real sequential dependencies. A word-level
+step is neither necessarily one FPGA clock nor one transistor gate delay.
+Increasing word width also changes comparator delay. Logical depth remains
+O(log² N), with bound `3L+7a+5`, while the processor capacity is at most 128.
 
-## Remaining physical implementation work
+## Remaining physical acceptance
 
-Suggested blocks: controller, one network ROM, subspace storage, packed
-memory, a reused comparison/copy datapath, and existing byte-channel IO.
-The controller must sequence descriptor selection/broadcast, transpose,
-restore and commit. Injection/selection logic is global control work, not
-an added bank of per-position cells; its physical cost is still unmeasured.
-
-No RTL, cell library, transistor netlist or power model is shipped yet.
-Before accepting hardware budgets, compare whole datapaths under identical
-technology, loads, buffering and constraints: per-position and per-pair
-transistors, controller/ROM cost, area, critical path, leakage and dynamic
-energy for matched workloads. Functional tests certify the software model,
-not those physical properties. Future optimization must keep the independent
-copy oracle and must not assume stability of the existing sorting network.
+- Write RTL for the staged allocation and independent processor inputs.
+- Compare RTL with the snapshot oracle, including ghost/scratch lifetimes.
+- Synthesize and measure register bits, comparators, muxes, routing, controller,
+  ROM, area, timing, leakage and switching energy in the same technology.
+- Include the mutable-origin requirement when comparing with constant-label
+  historical designs. No physical-equivalence claim follows from C sizes.
+- Keep exactly-three-pass depth without additional layers as an unachieved
+  optional optimization; current software uses 449 network layers plus locals.

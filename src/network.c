@@ -3,7 +3,7 @@
  *
  * Generates a pairwise network (power-of-two only, padded otherwise).
  * Non-adjacent exchanges are not generally stable for equal keys.
- * The two-phase addressing model must not assume tie stability.
+ * Addressing must not assume tie stability.
  *
  * For arbitrary SPACE_SIZE:
  *  1) build pairwise network for next power of two >= SPACE_SIZE

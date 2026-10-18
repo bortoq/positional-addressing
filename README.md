@@ -9,8 +9,12 @@ copying of positional keys, without arithmetic on addresses in the mechanism.
   bits within copied groups. The pairwise network need not be stable.
 - **Network:** 65,520 positions, 3,997,039 comparator pairs, 136 layers per pass.
 - **State:** the same five 16-bit key fields and three bit fields per position.
-  Phase 1 issues one interval at a time through the same cells and network;
-  a cycle with K active copies takes `2K+2` network passes, not three passes.
+  Phase 1 decodes slots independently and classifies all intervals together.
+- **Parallel depth:** **449 network layers + 5 local steps = 454** at the
+  default size, independent of active copies. Three sorting passes plus
+  monotone interval splitting replace the earlier 3234-step implementation.
+  The same cells, five key words, three flags and graph links are reused;
+  C simulates their work sequentially. The configured processor has 1–128 slots.
 
 The third phase was restored because the supposedly stable network changes
 the order of equal keys. Independent tests also found descriptor loss and
@@ -34,6 +38,7 @@ make sorter
 cat /tmp/prog.ldrpkt input.bin | ./vm1 sorter.txt > out.bin
 make check
 make check-addressing
+make check-parallel
 ```
 
 The legacy loop reads one byte per logical cycle and writes the previously
@@ -45,7 +50,7 @@ input bytes. EOF or `LIFE` ends the run; pending results are not drained at EOF.
 - `src/machine.c/.h`: three-phase addressing, packed memory and channel loop.
 - `src/network.c`: pairwise network generator; `src/loader.h`: loader words.
 - `tools/`: C compiler from copy3 and LDR1 packer.
-- `tests/`: units, exact channel checks and independent simultaneous-copy oracle.
+- `tests/`: units, exact channel checks and independent simultaneous-copy oracle and parallel schedule checks.
 - `doc/`: [algorithm](doc/README.md), [hardware](doc/hardware.md),
   [roadmap](doc/roadmap.md) and [audit](doc/audit.md).
 - `examples/`: echo; `sort256_runtime.vm1` remains an explicit unfinished stub.
