@@ -623,57 +623,50 @@ static void test_seed_intervals_and_stage1_init(void)
   free(vm);
 }
 
-static void test_stage3(void)
+static void test_stable_data_order(void)
 {
   machine vm = {0};
-  vm.subspace[0].role = 1;
-  vm.subspace[1].role = 1;
-  vm.subspace[0].key.sort = 100;
-  vm.subspace[1].key.sort = 100;
-  vm.subspace[0].key.partner = 11;
-  vm.subspace[1].key.partner = 10;
-  vm.subspace[0].value = 1;
-  vm.subspace[1].value = 0;
-  stage3_init(&vm);
-  stage3_pair(&vm, 0, 1);
-  CHECK(vm.subspace[0].key.partner == 10 && vm.subspace[1].key.partner == 11 &&
-            vm.subspace[0].value == 0 && vm.subspace[1].value == 1,
-        "stage3 restores source order and payload");
-  CHECK(vm.subspace[0].key.sort == 100 && vm.subspace[1].key.sort == 100 &&
-            vm.subspace[0].role == 1 && vm.subspace[1].role == 1,
-        "stage3 preserves group and write mask");
-  stage3_pair(&vm, 0, 1);
-  CHECK(vm.subspace[0].value == 0, "stage3 leaves sorted group unchanged");
-  vm.subspace[0].key.partner = 12;
-  vm.subspace[1].key.sort = 101;
-  stage3_pair(&vm, 0, 1);
-  CHECK(vm.subspace[0].key.partner == 12, "stage3 never crosses group boundary");
-  vm.subspace[1].key.sort = 100;
-  vm.subspace[0].role = 0;
-  stage3_pair(&vm, 0, 1);
-  CHECK(vm.subspace[0].key.partner == 12, "stage3 ignores non-writing group");
-  /* The actual four-wire pairwise network, with shuffled source origins. */
-  const idx origins[4] = {0, 3, 2, 1};
-  const idx links[5][2] = {{0, 2}, {1, 3}, {0, 1}, {2, 3}, {1, 2}};
+  for (unsigned group = 0; group < 3; group++)
+    for (unsigned origin = 0; origin < 3; origin++) {
+      memset(vm.subspace, 0, 2 * sizeof vm.subspace[0]);
+      vm.subspace[0].key.sort = 10 + group;
+      vm.subspace[1].key.sort = 11;
+      vm.subspace[0].key.partner = 20 + origin;
+      vm.subspace[1].key.partner = 21;
+      vm.subspace[0].value = vm.subspace[0].role = 1;
+      stage2_origin_pair(&vm, 0, 1);
+      stage2_pair(&vm, 0, 1);
+      unsigned swap = group > 1 || (group == 1 && origin > 1);
+      CHECK(vm.subspace[0].key.sort == (swap ? 11 : 10 + group) &&
+                vm.subspace[0].key.partner == (swap ? 21 : 20 + origin) &&
+                vm.subspace[0].value == !swap && vm.subspace[0].role == !swap,
+            "two strict comparisons implement stable order for every relation");
+    }
+  /* Known nonstable pairwise counterexample: (0,0),(1,1),(0,2),(0,3).
+   * Ordering must be repaired inside the sorting pass itself. */
+  const idx links[5][2] = {{0,2},{1,3},{0,1},{2,3},{1,2}};
   for (unsigned i = 0; i < 4; i++) {
-    vm.subspace[i].role = 1;
-    vm.subspace[i].key.sort = 100;
-    vm.subspace[i].key.partner = origins[i];
-    vm.subspace[i].value = origins[i] & 1;
+    vm.subspace[i].key.sort = (idx)(i == 1);
+    vm.subspace[i].key.partner = (idx)i;
+    vm.subspace[i].value = (data)(i == 2);
+    vm.subspace[i].role = (bit)(i & 1);
   }
   for (unsigned i = 0; i < 5; i++) {
     network_add_layer(&vm.fabric);
     network_push_pair(&vm.fabric, links[i][0], links[i][1]);
   }
-  run_network(&vm, stage3_pair);
+  run_data_network(&vm);
+  const idx expected[] = {0,2,3,1};
   int ordered = 1;
   for (unsigned i = 0; i < 4; i++)
-    ordered &= vm.subspace[i].key.partner == i && vm.subspace[i].value == (i & 1);
-  CHECK(ordered, "stage3 restores ordered bits through the nonstable pairwise network");
+    ordered &= vm.subspace[i].key.partner == expected[i] &&
+               vm.subspace[i].value == (expected[i] == 2) &&
+               vm.subspace[i].role == (expected[i] & 1);
+  CHECK(ordered, "stable pass preserves origins, payload and roles in nonstable network");
   network_free(&vm.fabric);
-  stage3_init(NULL);
-  stage3_pair(NULL, 0, 1);
-  CHECK(1, "stage3 null guards");
+  stage2_origin_pair(NULL, 0, 1);
+  run_data_network(NULL);
+  CHECK(1, "stable data pass null guards");
 }
 
 static void test_run_cycle_and_channels(void)
@@ -737,7 +730,7 @@ int main(void)
   test_sync_and_reset();
   test_marking_records();
   test_stage2();
-  test_stage3();
+  test_stable_data_order();
   test_run_network();
   test_helpers_ceil_log2();
   test_set_bit();

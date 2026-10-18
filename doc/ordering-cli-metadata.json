@@ -1,0 +1,24 @@
+{
+  "baseline": "9886b1c",
+  "compiler": "cc (Ubuntu 12.3.0-1ubuntu1~23.04) 12.3.0",
+  "flags": [
+    "-Wall",
+    "-Wextra",
+    "-Werror",
+    "-pedantic",
+    "-std=c11",
+    "-O2"
+  ],
+  "cpu_affinity": 0,
+  "rounds": 9,
+  "cycles": 16,
+  "source_sha256": {
+    "three-phase/machine.c": "d23b839c211ede810054910d09066fab3da54445d7e4127eb25e769c4b43fd12",
+    "three-phase/machine.h": "18feccbfb4dbe0cf1aac2789ab475b6a34c0a2c38fa082ff33e4b0a5a9bb7c9d",
+    "three-phase/loader.h": "50a7f4880752052929b9b640652c7406ebb97a8f3299497cdff1eb1dadb5257b",
+    "two-phase/machine.c": "367138391ab4c38cfcf037e030bcd97b9f28f344006f335ed86ff75c0f1b8e6b",
+    "two-phase/machine.h": "2ca34cfc139e4904f822840a33cc9a7b0f1459610c035c9254630f01d0fe6771",
+    "two-phase/loader.h": "50a7f4880752052929b9b640652c7406ebb97a8f3299497cdff1eb1dadb5257b"
+  },
+  "network_sha256": "76103d6bafb7e1dc67d38a0ef890d755d44cf9918a39f9fc2f0dac743518b342"
+}

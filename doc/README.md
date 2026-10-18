@@ -54,19 +54,25 @@ the change of interval format.
 The first repair broadcast descriptors sequentially. It passed the functional
 oracle but required `2K+2` passes for K copies, violating the parallel-depth
 goal. Descriptor sorting and monotone interval splitting now replace that repair;
-the corrected second and third phases remain. The owner accepted additional
+the corrected record transport remains. The current stable data comparator
+now incorporates source-origin ordering and removes the separate third phase. The owner accepted additional
 work within phase 1 without new position cells on 2026-10-18. Three phases
 mean algorithmic stages, rather than three network passes or FPGA clocks.
 
-## The three phases
+The new two-phase mechanism does not assume that the fabric is stable. It
+implements stable order explicitly at each data comparator. Existing origin
+words and one existing flag suffice. This is a different fix from deleting
+the third phase while retaining scalar comparisons, which remains incorrect.
+
+## The two phases
 
 Each position retains `value`, `active`, `role` and five 16-bit key words
 `{low,high,partner,sort,origin}`. There are no extra persistent packet arrays.
 
-| State | Phase 1 | Phase 2 / 3 |
+| State | Phase 1 | Phase 2 |
 |---|---|---|
 | `low,high,partner` | Primary interval bounds and paired lower bound | Scratch bounds, moving source origin |
-| `value,active` | Primary source flag and nonempty flag | Actual bit and scratch flag |
+| `value,active` | Primary source flag and nonempty flag | Actual bit and origin-comparison scratch flag |
 | `sort,origin,role` | Packed ghost bounds, ghost paired bound, ghost source flag | Group key, physical index, destination write flag |
 
 1. **Classify.** Commit the previous result. Each slot independently reads
@@ -81,13 +87,17 @@ Each position retains `value`, `active`, `role` and five 16-bit key words
    are retained. Final nonempty primary records belong to their own physical
    positions; assign their paired lower bounds as `sort`, otherwise `sort=i`.
    Restore `origin=i`. Actual data stays in packed `space` throughout phase 1.
-2. **Transpose.** Load bits from `space`, set `partner=origin`, then sort
-   `sort,partner,value,role` as a complete record. Equal-length paired ranges
-   exchange groups; other positions retain their rank. Source roles become
-   destination write roles.
-3. **Restore order.** Within each writing group with equal `sort`, sort by
-   transported source origin, carrying the bit. Different groups do not
-   exchange records. This phase remains necessary for the nonstable fabric.
+2. **Stable data ordering.** Load bits from `space`, set `partner=origin`,
+   then sort complete `sort,partner,value,role` records by `(sort,partner)`.
+   Each fabric layer has TWO comparator rounds. First compare origins and save
+   `r = partner_a > partner_b` in the existing `active` flag of a. Then compare
+   group keys with operands reversed iff r, and invert the result iff r:
+   `swap = r ? !(sort_b > sort_a) : (sort_a > sort_b)`. Both comparisons are
+   strict 16-bit comparisons. Swap the complete record once if needed; `active`
+   is physical scratch and does not move. Equal groups are therefore ordered by
+   original position during this pass. No separate restoration pass remains.
+   Equal paired lengths preserve group placement, and origin ordering maps
+   source bits onto destination positions in their original relative order.
 
 Only writing roles commit at the next boundary. Processor modifications
 therefore affect the following cycle. The existing channel boundary is unchanged.
@@ -108,7 +118,7 @@ at most one input has a nonempty contribution to each output. `interval_union`
 checks this invariant in the C model. After all a dimensions, blocks are
 singletons, so every covered position receives exactly its interval's metadata,
 and gaps receive none. No stable sort or arithmetic translation of addresses
-is needed; ordering by original source position is handled in phase 3.
+is needed; ordering by original source position is built into phase 2.
 
 ## Missing wires without new position storage
 
@@ -167,26 +177,30 @@ below H, and T the number (0 or 1) of top-dimension local cross layers.
 The exact instrumented depth is
 
 ```
-D = 3L + a + G + 5C + T + 5 <= 3L + 7a + 5 = O(log² N).
+D = L + 2L + a + G + 5C + T + 5 <= 3L + 7a + 5 = O(log² N).
 ```
 
 The five local steps are boundary commit, reset, decoder seeding (including
 clearing ghost fields), final classification and payload loading. The no-op
-phase-3 initialization is not counted. All schedules depend on N and the
+former phase-3 initialization is absent. All schedules depend on N and the
 configured slot capacity, but not on active instruction count K.
 
 For N=65520 and 128 slots: L=136, a=16, G=T=0, C=5 (d=256,128,64,32,16):
 
 ```
-3*136 + 16 + 5*5 = 449 network layers
+136 + 2*136 + 16 + 5*5 = 449 network/comparison layers
 449 + 5 = 454 total scheduled steps
 ```
 
-N=240/256 with two slots uses `3*36+8+5=121` steps. This replaces the earlier
-`20L+30a+34=3234`-step collective-join implementation. There are now three
-full sorting passes plus butterfly/scratch layers. Exactly three full passes
-without any additional layers has not been achieved. Word-level layer depth
-is not a claim about FPGA clocks or transistor gate depth.
+N=240/256 with two slots uses `36+2*36+8+5=121` steps. The earlier
+collective-join implementation needed 3234 steps; its three-phase replacement
+needed 454 coarse steps. The new TWO-phase implementation also reports 454,
+now explicitly including two single-comparator rounds per data layer.
+A one-step compound comparator could reduce this to 318, but its hardware
+cost cannot be treated as one 16-bit comparator. Exactly two data phases do
+not imply two hardware clocks or two unmodified full sorting passes.
+The [ordering experiment](ordering.md) gives timings, register activity,
+comparison-round normalization and the remaining physical limits.
 
 ## Network and loading
 

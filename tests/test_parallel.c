@@ -40,7 +40,8 @@ static void trace_link(unsigned a, unsigned b)
   require(a < SPACE_SIZE && b < SPACE_SIZE, "link bounds");
   require(!used[a] && (a == b || !used[b]), "physical position reused within a sublayer");
   used[a] = used[b] = 1;
-  if (a != b && strcmp(current_layer, "descriptor-sort") && strcmp(current_layer, "network")) {
+  if (a != b && strcmp(current_layer, "descriptor-sort") && strcmp(current_layer, "network") &&
+      strcmp(current_layer, "data-origin") && strcmp(current_layer, "data-key")) {
     unsigned d = b - a;
     require(a < b && !(d & (d - 1)), "constructed link must have power-of-two distance");
     require(links[a] & d, "constructed link absent from existing fabric");
@@ -172,8 +173,14 @@ static void check_schedule(machine *vm)
     tracing = 1;
     run_cycle(vm);
     tracing = 0;
+    for (unsigned i = 1; i < SPACE_SIZE; i++) {
+      idx prev = vm->subspace[i - 1].key.sort, next = vm->subspace[i].key.sort;
+      require(prev <= next && (prev != next ||
+                vm->subspace[i - 1].key.partner < vm->subspace[i].key.partner),
+              "stable data pass leaves all groups in source-origin order");
+    }
     if (expected_depth)
-      require(depth == expected_depth, "cycle depth: 3L + a + ghost routing + 5 local steps");
+      require(depth == expected_depth, "two-phase cycle: L marking + 2L comparator rounds + routing + 5 local steps");
     require(depth <= 3 * vm->fabric.count + 7 * CEIL_LOG2(SPACE_SIZE) + 5,
             "cycle depth exceeds 3L+7a+5");
     if (!trial) {

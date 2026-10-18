@@ -1,7 +1,7 @@
 /*
  * vm1 — positional addressing definitions
  *
- * Demo 2: three-phase addressing via a pairwise sorting network.
+ * Demo 2: two-phase addressing via a pairwise sorting network.
  * Interval = half-open [low,high) -> bits low through high-1 copied.
  * Boundary predicates use strict/non-strict compares; stage2 uses >.
  *
@@ -109,16 +109,16 @@ typedef struct { /* full network */
 typedef struct {
   idx low;     /* stage1 primary interval lower bound */
   idx high;    /* stage1 primary interval exclusive upper bound */
-  idx partner; /* stage1 paired lower bound; stage2/3 transported source origin */
+  idx partner; /* stage1 paired lower bound; stage2 transported source origin */
   idx sort;    /* stage1 packed ghost bounds, then target group key */
-  idx origin;  /* stage1 ghost paired bound; restored physical ID for stage2/3 */
+  idx origin;  /* stage1 ghost paired bound; restored physical ID for stage2 */
 } position_key;
 
 typedef struct {
   data space[SPACE_SIZE / CHAR_BIT]; /* packed bits */
   struct {
-    data value; /* stage1 primary source flag; stage2/3 actual bit payload */
-    bit active; /* stage1 primary interval nonempty */
+    data value; /* stage1 primary source flag; stage2 actual bit payload */
+    bit active; /* stage1 nonempty; stage2 origin-comparison scratch */
     bit role;   /* stage1 ghost source, then position source; stage2 destination to commit */
     position_key key;
   } subspace[SPACE_SIZE];

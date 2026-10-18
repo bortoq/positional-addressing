@@ -1,8 +1,7 @@
 # Hardware notes — VM1 positional addressing
 
-`src/machine.c` is a behavioral model, not synthesizable RTL. It models three
-sorting-network passes plus monotone interval splitting, using existing fields
-and connections. See the [algorithm and proofs](README.md).
+`src/machine.c` is a behavioral model, not synthesizable RTL. It models two phases: descriptor sorting / interval splitting and stable
+data ordering, using existing fields and connections. See the [algorithm and proofs](README.md).
 
 ## State budget
 
@@ -29,7 +28,7 @@ same caveat already applied to the preceding collective-join implementation.
 
 ## Existing links and execution schedule
 
-Descriptor sorting and phases 2/3 traverse the loaded pairwise fabric. Butterfly
+Descriptor sorting and phase-2 comparator rounds traverse the loaded fabric. Butterfly
 real pairs and mirrored ghost pairs use dimension-d links already present.
 A mixed pair uses an existing dimension-H link twice and dimension-d link three
 times through a scratch cell, with local preparation/merging combined into the
@@ -57,13 +56,33 @@ not prove identical mux/control circuitry or transistor/energy costs. Local
 record temporaries in the C code describe combinational values; RTL must realize
 the listed staged moves in the existing registers.
 
+## Stable ordering with one comparator
+
+The data node first compares 16-bit source origins and stores the result r in
+its existing `active` bit. It then uses the SAME strict comparator for group keys:
+normal input order if r=0, reverse input order if r=1, with result inversion if r=1.
+This implements lexicographic ordering with two sequential comparator rounds
+and a single complete-record exchange. `active` is not transported with records;
+it is overwritten before each consuming key comparison.
+
+No second comparator, widened stored key or additional register bit is required.
+The previous mechanism already needed both operand directions to test group
+equality; this implementation chooses direction from a data flag. Input muxes,
+control routing, timing and gate count must still be checked in RTL. The unchanged
+field/word-comparator budget is not a proof of identical transistor count.
+
 ## Depth and energy
 
-At the default size: 408 layers from three full passes, 16 real butterfly layers,
-25 cross-pair layers and five local steps, total 454. The previous algorithm
+At the default size: 136 marking-sort layers, 272 data-comparison rounds,
+16 real butterfly layers, 25 cross-pair layers and five local steps, total 454. The previous algorithm
 needed 3234 scheduled steps. The trace visits 12,515,741 pairs/local operations
 instead of 95,665,352. These counts are independent of active K at fixed hardware
-configuration. They indicate reduced scheduled work, not measured energy.
+configuration. The current data phase has two 16-bit comparator rounds per fabric layer;
+the former count treated its restoration node's compound work as one layer.
+Therefore equal totals do not establish equal single-comparator clock depth.
+The normalized comparison-budget argument and host timings are in [ordering.md](ordering.md).
+Register-activity counters show extra scratch-flag flips and, for unaligned data,
+extra complete-record writes; energy savings are NOT established.
 
 Word comparisons and selection must be implemented using the chosen comparator /
 mux timing. Packing uses fixed bit connections; it requires no stored arithmetic
@@ -80,5 +99,5 @@ O(log² N), with bound `3L+7a+5`, while the processor capacity is at most 128.
   ROM, area, timing, leakage and switching energy in the same technology.
 - Include the mutable-origin requirement when comparing with constant-label
   historical designs. No physical-equivalence claim follows from C sizes.
-- Keep exactly-three-pass depth without additional layers as an unachieved
-  optional optimization; current software uses 449 network layers plus locals.
+- Do not count a compound two-word comparison as a free 16-bit operation.
+  Production explicitly schedules both comparison rounds and totals 454 steps.

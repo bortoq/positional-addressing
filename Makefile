@@ -125,7 +125,7 @@ check: all $(SORTER) $(SMALL_SORTER) tests
 	./$(TEST_COMPILE_BIN)
 	@echo "== sort: 256-pair sanity =="
 	./$(TEST_SORT_BIN)
-	@echo "== vm1 channel compat (exact echo, 3-phase) =="
+	@echo "== vm1 channel compat (exact echo, 2-phase) =="
 	./$(TEST_COMPAT_BIN)
 	@echo "== independent simultaneous-copy oracle =="
 	$(MAKE) check-addressing
@@ -136,6 +136,7 @@ test: check
 clean:
 	rm -f $(VM1_BIN) $(SORT_BIN) $(SORTER) $(MKLDR1_BIN) $(C3_BIN) $(TEST_SORT_BIN) $(TEST_COMPAT_BIN) $(TEST_MACHINE_BIN) $(TEST_NETUNIT_BIN) $(TEST_LOADER_BIN) $(TEST_COMPILE_BIN) $(TEST_ADDRESS_BIN) $(TEST_ADDRESS_SMALL_BIN) $(TEST_ADDRESS_IRREGULAR_BIN)
 	rm -f $(PARALLEL_BINS) $(IRREGULAR_SORTER) tests/test_parallel_shape tests/sorter-shape.txt
+	rm -f tests/bench_ordering tests/bench_ordering_stats tests/test_ordering_probe
 	rm -f $(SMALL_SORTER)
 	rm -f tmp_* tmp-*
 
@@ -156,4 +157,30 @@ check-parallel-shapes: $(SORT_BIN)
 	  $(CC) $(CFLAGS) -DSPACE_SIZE=$$n -DPROCESSOR_N=128 tests/test_parallel.c -o tests/test_parallel_shape; \
 	  ./$(SORT_BIN) $$n > tests/sorter-shape.txt; \
 	  ./tests/test_parallel_shape tests/sorter-shape.txt; \
+	done
+
+# Optional research controls; none changes the vm1 CLI or the default kernel.
+ORDERING_DEPS = tests/bench_ordering.c tests/ordering_variants.h $(VM1_SRC) $(SRC_DIR)/machine.h $(SRC_DIR)/loader.h
+.PHONY: bench-ordering bench-ordering-stats check-ordering
+
+tests/bench_ordering: $(ORDERING_DEPS)
+	$(CC) $(CFLAGS) $< -o $@
+
+tests/bench_ordering_stats: $(ORDERING_DEPS)
+	$(CC) $(CFLAGS) -DVM1_ORDERING_STATS $< -o $@
+
+bench-ordering: tests/bench_ordering $(SORTER)
+	./tests/bench_ordering $(SORTER)
+
+bench-ordering-stats: tests/bench_ordering_stats $(SORTER)
+	./tests/bench_ordering_stats $(SORTER)
+
+check-ordering: $(SORTER) $(SMALL_SORTER) $(IRREGULAR_SORTER)
+	@set -e; for variant in 0 1 2; do \
+	  echo "ordering control $$variant"; \
+	  for n in 240 256 65520; do \
+	    case $$n in 240) net=$(IRREGULAR_SORTER); proc=2;; 256) net=$(SMALL_SORTER); proc=2;; *) net=$(SORTER); proc=128;; esac; \
+	    $(CC) $(CFLAGS) -DSPACE_SIZE=$$n -DPROCESSOR_N=$$proc -DORDERING_VARIANT=$$variant -DVM1_MACHINE_SOURCE='"ordering_probe.h"' tests/test_addressing.c -o tests/test_ordering_probe; \
+	    ./tests/test_ordering_probe $$net; \
+	  done; \
 	done

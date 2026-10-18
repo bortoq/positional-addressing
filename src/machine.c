@@ -1,13 +1,13 @@
 /*
- * vm1 — three-phase positional addressing, without arithmetic on keys.
+ * vm1 — two-phase positional addressing, without arithmetic on keys.
  *
  * Instructions specify half-open [low,high) ranges. All active source and
  * destination ranges of a cycle must be pairwise disjoint and paired lengths
  * equal. Ordinary copies may replace the processor for the following cycle.
  *
  * stage1: decode all slots independently and classify intervals collectively;
- * stage2: sort complete data records by the paired interval's lower boundary;
- * stage3: restore source-origin order within each copied destination group.
+ * stage2: sort complete records by (paired lower boundary, source origin),
+ * using one strict word comparator in two rounds per sorting-network layer.
  * The network need not be stable. Stage1 sorts descriptors, then splits
  * intervals through a butterfly; absent wires reuse existing scratch words.
  * Actual data remains in space and is loaded for stage2.
@@ -702,46 +702,32 @@ STATIC void swap_value_and_role(machine *vm1, idx l, idx r)
   vm1->subspace[r].role = role;
 }
 
+/* One strict word comparator, reused in two rounds per fabric layer.
+ * The existing active flag is scratch after interval classification. */
+STATIC void stage2_origin_pair(machine *vm1, idx a, idx b)
+{
+  if (vm1)
+    vm1->subspace[a].active =
+        (bit)(vm1->subspace[a].key.partner > vm1->subspace[b].key.partner);
+}
 STATIC void stage2_pair(machine *vm1, idx a, idx b)
 {
-  if (!vm1) {
+  if (!vm1)
     return;
-  }
-  if (vm1->subspace[a].key.sort <= vm1->subspace[b].key.sort) {
+  bit reverse = vm1->subspace[a].active;
+  idx left = reverse ? vm1->subspace[b].key.sort : vm1->subspace[a].key.sort;
+  idx right = reverse ? vm1->subspace[a].key.sort : vm1->subspace[b].key.sort;
+  /* If origin_a>origin_b, equality of group keys must also cause a swap:
+   * !(key_b>key_a) supplies >= using the SAME strict comparator. */
+  if ((left > right) == reverse)
     return;
-  }
   swap_sort_and_partner(vm1, a, b);
   swap_value_and_role(vm1, a, b);
 }
 
-/* Restore source-origin order inside copied destination groups. After
- * stage2, different groups are globally ordered and must never exchange data.
- * Equality is expressed with the existing strict-comparison primitive. */
-STATIC void stage3_init(machine *vm1)
-{
-  (void)vm1;
-}
-
-STATIC void stage3_pair(machine *vm1, idx a, idx b)
-{
-  if (!vm1 || !vm1->subspace[a].role)
-    return;
-  if (vm1->subspace[a].key.sort > vm1->subspace[b].key.sort ||
-      vm1->subspace[b].key.sort > vm1->subspace[a].key.sort)
-    return;
-  if (vm1->subspace[a].key.partner > vm1->subspace[b].key.partner) {
-    idx t = vm1->subspace[a].key.partner;
-    vm1->subspace[a].key.partner = vm1->subspace[b].key.partner;
-    vm1->subspace[b].key.partner = t;
-    data v = vm1->subspace[a].value;
-    vm1->subspace[a].value = vm1->subspace[b].value;
-    vm1->subspace[b].value = v;
-  }
-}
-
 /* ---------- run ---------- */
 
-STATIC void run_network(machine *vm1, void (*pair_op)(machine *, idx, idx))
+static inline void run_network(machine *vm1, void (*pair_op)(machine *, idx, idx))
 {
   if (!vm1 || !pair_op) {
     return;
@@ -756,6 +742,26 @@ STATIC void run_network(machine *vm1, void (*pair_op)(machine *, idx, idx))
   }
 }
 
+STATIC void run_data_network(machine *vm1)
+{
+  if (!vm1)
+    return;
+  for (size_t l = 0; l < vm1->fabric.count; l++) {
+    VM1_LAYER("data-origin");
+    for (size_t p = 0; p < vm1->fabric.layers[l].count; p++) {
+      pair edge = vm1->fabric.layers[l].pairs[p];
+      VM1_LINK(edge.a, edge.b);
+      stage2_origin_pair(vm1, edge.a, edge.b);
+    }
+    VM1_LAYER("data-key");
+    for (size_t p = 0; p < vm1->fabric.layers[l].count; p++) {
+      pair edge = vm1->fabric.layers[l].pairs[p];
+      VM1_LINK(edge.a, edge.b);
+      stage2_pair(vm1, edge.a, edge.b);
+    }
+  }
+}
+
 STATIC void run_cycle(machine *vm1)
 {
   if (!vm1)
@@ -763,9 +769,7 @@ STATIC void run_cycle(machine *vm1)
   stage1_init(vm1);
   seed_intervals_from_program(vm1);
   stage2_init(vm1);
-  run_network(vm1, stage2_pair);
-  stage3_init(vm1);
-  run_network(vm1, stage3_pair);
+  run_data_network(vm1);
 }
 
 STATIC void run_channels(machine *vm1)
